@@ -7,6 +7,7 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
 const ease = (t) => t * t * (3 - 2 * t);
 const sm = (v, a, b) => ease(clamp((v - a) / (b - a)));
+const easeOut = (t) => 1 - Math.pow(1 - t, 3);
 const approach = (v, target, step) => (v < target ? Math.min(target, v + step) : Math.max(target, v - step));
 const money = (n) => `$${n.toFixed(2).replace(/\.00$/, '')}`;
 const narrow = () => window.innerWidth / window.innerHeight < 0.9;
@@ -59,6 +60,9 @@ let f = 0, fT = 0;        // bag finale (0..1)
 let stepAt = performance.now();
 let insideAt = 0;
 let molApplied = false, molBusy = false, desiredMol = false;
+let reveals = [0, 0, 0];
+// "See inside" timeline, seconds from pressing the button
+const TL = { bev: 2.6, diveA: 2.2, diveB: 5.8, fadeA: 4.8, swap: 6.6, unfade: 8.0, mol0: 7.6, gap: 2.8, card: 9.4 };
 
 const sc = createScene($('#gl'));
 const PANEL = { hero: 'hero', cats: 'cats', product: 'shop', inside: 'shop', bag: 'bag', done: 'bag' };
@@ -83,8 +87,9 @@ function apply() {
   sc.set('product', side ? 1 : 0);
   updateShift();
   sc.setAutoSpin(step === 'product');
-  requestMol(step === 'inside');
+  if (step !== 'inside') requestMol(false);
   if (step === 'inside') insideAt = performance.now();
+  $('#fade').style.opacity = 0;
 
   if (step === 'product' || step === 'inside') showProduct(state.pi, true);
   if (step === 'product') { const h = $('#hint'); h.classList.add('show'); clearTimeout(h._t); h._t = setTimeout(() => h.classList.remove('show'), 5000); }
@@ -93,6 +98,7 @@ function apply() {
 }
 
 function updateShift() {
+  if (state.step === 'inside') return;
   const side = ['product', 'inside', 'bag', 'done'].includes(state.step);
   sc.set('shiftX', side && !narrow() ? 1 : 0);
   sc.set('shiftY', side && narrow() ? (state.step === 'bag' || state.step === 'done' ? 2.4 : 1) : 0);
@@ -212,9 +218,10 @@ window.addEventListener('keydown', (e) => {
 });
 
 /* ------------------------------------------------------------------ molecule jump cut */
-function requestMol(on) {
+function requestMol(on, quiet = false) {
   desiredMol = on;
   if (molBusy || on === molApplied) return;
+  if (quiet) { molApplied = on; sc.setMol(on); document.body.classList.toggle('dark', on); if (on) fillMolLabels(); return; }
   molBusy = true;
   const stage = $('#stage'); stage.classList.remove('jumpcut'); void stage.offsetWidth; stage.classList.add('jumpcut');
   setTimeout(() => {
@@ -231,10 +238,9 @@ function labels() {
   const show = molApplied && state.step === 'inside';
   $('#molUi').classList.toggle('on', show);
   if (!molApplied) return;
-  const a = clamp(sc.molIn * 1.6 - 0.4);
   $$('.mol-label').forEach((el, i) => {
     const { x, y } = sc.molScreen(i);
-    el.style.transform = `translate(${x - el.offsetWidth / 2}px, ${y}px)`; el.style.opacity = a;
+    el.style.transform = `translate(${x - el.offsetWidth / 2}px, ${y}px)`; el.style.opacity = clamp((reveals[i] - 0.35) / 0.65);
   });
 }
 
@@ -254,16 +260,32 @@ function boot() {
     // bag finale: lid lifts, logo floats forward and settles back
     const bumpLid = Math.sin(Math.PI * sm(f, 0.1, 0.9)) * 0.8;
     const bumpLift = Math.sin(Math.PI * sm(f, 0.15, 0.95)) * 0.95;
+
+    // See inside: lid opens, camera rises to a bird's-eye view over the tub, dives into the cream,
+    // fades to black, then the molecules are introduced one at a time.
+    const inside = state.step === 'inside';
+    const it = inside ? (performance.now() - insideAt) / 1000 : 0;
+    sc.set('bev', inside ? sm(it, 0, TL.bev) : 0);
+    sc.set('dive', inside ? sm(it, TL.diveA, TL.diveB) : 0);
     sc.set('lift', Math.max(seg.lift * k, bumpLift));
     sc.set('zoom', seg.zoom * k);
-    sc.set('lid', Math.max(seg.lid * k, bumpLid));
+    sc.set('lid', Math.max(seg.lid * k, bumpLid, inside ? sm(it, 0, 1.8) : 0));
     sc.set('fin', sm(f, 0, 0.5));
+    $('#fade').style.opacity = inside ? (it < TL.swap ? sm(it, TL.fadeA, TL.swap) : 1 - sm(it, TL.swap, TL.unfade)) : 0;
+    if (inside && it >= TL.swap && !molApplied) requestMol(true, true);
+    reveals = [0, 1, 2].map((i) => (inside && molApplied ? easeOut(clamp((it - TL.mol0 - i * TL.gap) / 2)) : 0));
+    sc.setMolReveal(reveals);
+    document.body.classList.toggle('cinema', inside && it < TL.card);
+    if (inside) {   // keep the bird's-eye view centred; shift the scene once the molecules appear
+      const side = it > TL.swap;
+      sc.set('shiftX', side && !narrow() ? 1 : 0); sc.set('shiftY', side && narrow() ? 1 : 0);
+    }
 
     const showCats = state.step === 'cats' && t2 > 0.86;
     $('.step[data-panel="cats"]').classList.toggle('show', showCats);
     $('#cats').inert = !showCats;
 
-    sc.setMolProgress(state.step === 'inside' ? clamp((performance.now() - insideAt) / 14000) : 0);
+    sc.setMolProgress(inside && molApplied ? clamp((it - TL.swap) / 16) : 0);
     sc.update(dt); labels();
     requestAnimationFrame(loop);
   };
@@ -289,5 +311,5 @@ document.body.classList.add('loading');
   } catch { /* fonts optional */ }
   sc.setProduct(products[0]);
   boot();
-  window.__nb = { sc, go, back, apply, get state() { return state; }, get t2() { return t2; }, get f() { return f; } };
+  window.__nb = { sc, go, back, apply, get state() { return state; }, get t2() { return t2; }, get f() { return f; }, seek(t) { insideAt = performance.now() - t * 1000; } };
 })();
