@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { buildMolecule } from './molecule.js';
+import logoData from './logo-shapes.json';
 
 const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -155,21 +156,13 @@ function haloTexture() {
   return new THREE.CanvasTexture(c);
 }
 
-/* ---------- monogram geometry (custom N + B) ---------- */
+/* ---------- monogram geometry (traced from the brand logo, see tools/trace_logo.py) ---------- */
 function monogramShapes() {
-  const N = new THREE.Shape();
-  [[0, 0], [0.22, 0], [0.22, 0.58], [0.6, 0], [0.82, 0], [0.82, 1], [0.6, 1], [0.6, 0.42], [0.22, 1], [0, 1]]
-    .forEach(([x, y], i) => (i ? N.lineTo(x, y) : N.moveTo(x, y)));
-  N.closePath();
-  const B = new THREE.Shape();
-  B.moveTo(0, 0); B.lineTo(0.44, 0);
-  B.absarc(0.44, 0.26, 0.26, -Math.PI / 2, Math.PI / 2, false);
-  B.absarc(0.44, 0.76, 0.24, -Math.PI / 2, Math.PI / 2, false);
-  B.lineTo(0, 1); B.lineTo(0, 0);
-  const h1 = new THREE.Path(); h1.moveTo(0.24, 0.1); h1.lineTo(0.44, 0.1); h1.absarc(0.44, 0.24, 0.14, -Math.PI / 2, Math.PI / 2, false); h1.lineTo(0.24, 0.38); h1.closePath();
-  const h2 = new THREE.Path(); h2.moveTo(0.24, 0.62); h2.lineTo(0.44, 0.62); h2.absarc(0.44, 0.74, 0.12, -Math.PI / 2, Math.PI / 2, false); h2.lineTo(0.24, 0.86); h2.closePath();
-  B.holes.push(h1, h2);
-  return { N, B };
+  return logoData.shapes.map((sh) => {
+    const shape = new THREE.Shape(sh.outline.map((p) => new THREE.Vector2(p[0], p[1])));
+    sh.holes.forEach((h) => shape.holes.push(new THREE.Path(h.map((p) => new THREE.Vector2(p[0], p[1])))));
+    return shape;
+  });
 }
 
 /* ---------- main factory ---------- */
@@ -251,26 +244,29 @@ export function createScene(canvas) {
   // monogram
   const logo = new THREE.Group(); jar.add(logo);
   const logoMat = new THREE.MeshStandardMaterial({ color: '#0b0b0b', roughness: 0.28, metalness: 0.25, transparent: true });
-  const { N, B } = monogramShapes();
-  const LOGO_H = 0.34;
-  const mk = (shape, ox) => {
-    const g = new THREE.ExtrudeGeometry(shape, { depth: 0.2, bevelEnabled: true, bevelThickness: 0.025, bevelSize: 0.02, bevelSegments: 3, curveSegments: 24 });
-    g.translate(ox, -0.5, -0.1); g.scale(LOGO_H, LOGO_H, LOGO_H); return g;
+  const LOGO_H = 0.32;
+  const mk = (shape) => {
+    const g = new THREE.ExtrudeGeometry(shape, { depth: 0.14, bevelEnabled: true, bevelThickness: 0.008, bevelSize: 0.003, bevelSegments: 2, curveSegments: 12 });
+    g.translate(0, -0.5, -0.07); g.scale(LOGO_H, LOGO_H, LOGO_H); return g;
   };
-  const totalW = 0.82 + 0.1 + 0.7;
-  const letterGeos = [mk(N, -totalW / 2), mk(B, -totalW / 2 + 0.92)];
+  const letterGeos = monogramShapes().map(mk);
   const letterFlat = letterGeos.map((g) => g.attributes.position.array.slice());
+  const letterNormals = letterGeos.map((g) => g.attributes.normal.array.slice());
   const letterMeshes = letterGeos.map((g) => { const m = new THREE.Mesh(g, logoMat); m.castShadow = true; logo.add(m); return m; });
   const LOGO_Y = 0.28;
   function bendLogo(b) {
     letterGeos.forEach((g, k) => {
-      const pos = g.attributes.position; const flat = letterFlat[k];
+      const pos = g.attributes.position, nor = g.attributes.normal; const flat = letterFlat[k], fn = letterNormals[k];
       for (let i = 0; i < pos.count; i++) {
         const x = flat[i * 3], y = flat[i * 3 + 1], z = flat[i * 3 + 2];
         const a = x / R;
         pos.setXYZ(i, lerp(x, R * Math.sin(a), b), y, z + b * (R * Math.cos(a) - R));
+        // rotate the flat normal with the bend (smooth shading; recomputing would facet the big flat triangles)
+        const ang = a * b, c = Math.cos(ang), sn = Math.sin(ang);
+        const nx = fn[i * 3], nz = fn[i * 3 + 2];
+        nor.setXYZ(i, nx * c + nz * sn, fn[i * 3 + 1], -nx * sn + nz * c);
       }
-      pos.needsUpdate = true; g.computeVertexNormals();
+      pos.needsUpdate = true; nor.needsUpdate = true;
     });
   }
   let lastBend = -1;
@@ -364,7 +360,7 @@ export function createScene(canvas) {
 
   function update(dt) {
     dt = Math.min(dt, 0.4); time += dt;
-    ['lift', 'zoom', 'lid', 'product', 'fin', 'shiftX', 'shiftY'].forEach((k) => { d[k] = damp(d[k], target[k], k === 'lid' ? 5 : 6, dt); });
+    ['lift', 'zoom', 'lid', 'product', 'fin', 'shiftX', 'shiftY'].forEach((k) => { d[k] = damp(d[k], target[k], k === 'shiftX' || k === 'shiftY' ? 4 : 3, dt); });
     mouse.sx = damp(mouse.sx, mouse.x, 3, dt); mouse.sy = damp(mouse.sy, mouse.y, 3, dt);
     if (introOn && introT < 1) introT = clamp(introT + dt / introDur);
     const it = easeOut(introT);
