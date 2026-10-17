@@ -1,12 +1,15 @@
 import './styles.css';
 import { createScene } from './scene.js';
-import { categories, products, byCategory, productById } from './data.js';
+import { categories, byCategory, products, productById } from './data.js';
 
 const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
 const ease = (t) => t * t * (3 - 2 * t);
 const sm = (v, a, b) => ease(clamp((v - a) / (b - a)));
+const approach = (v, target, step) => (v < target ? Math.min(target, v + step) : Math.max(target, v - step));
 const money = (n) => `$${n.toFixed(2).replace(/\.00$/, '')}`;
+const narrow = () => window.innerWidth / window.innerHeight < 0.9;
 
 /* ------------------------------------------------------------------ cart */
 let cart = {};
@@ -15,118 +18,200 @@ Object.keys(cart).forEach((id) => { if (!productById(id)) delete cart[id]; });
 const saveCart = () => { try { localStorage.setItem('nb-cart', JSON.stringify(cart)); } catch { /* private mode */ } };
 const cartCount = () => Object.values(cart).reduce((a, b) => a + b, 0);
 
-let toastTimer;
-function toast(msg) {
-  const t = $('#toast'); t.textContent = msg; t.classList.add('on');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), 2200);
+function updateBadge(bump) {
+  const badge = $('#cartCount'); badge.textContent = cartCount();
+  if (bump) { badge.classList.add('bump'); setTimeout(() => badge.classList.remove('bump'), 260); }
 }
 
-function renderCart() {
-  const ids = Object.keys(cart);
-  const list = $('#cartList'); const sum = $('#cartSum');
-  const count = cartCount();
-  const badge = $('#cartCount'); badge.textContent = count;
-  badge.classList.add('bump'); setTimeout(() => badge.classList.remove('bump'), 260);
-  if (!ids.length) {
-    list.innerHTML = '<p class="cart-empty">Your bag is empty. Pick a ritual above and add a favourite — it will appear here.</p>';
-    sum.innerHTML = ''; $('#checkoutBtn').disabled = true; return;
+function renderBag() {
+  const body = $('#cartBody'); const ids = Object.keys(cart);
+  if (state.step === 'done') {
+    body.innerHTML = `<div class="done"><h2>Thank you.</h2>
+      <p class="cart-empty">Concept preview. Nothing was charged and nothing will ship.</p>
+      <button class="btn btn-solid cta" id="restart">Start over</button></div>`;
+    return;
   }
-  list.innerHTML = ids.map((id) => {
-    const p = productById(id);
-    return `<div class="cart-item" data-id="${id}">
+  if (!ids.length) {
+    body.innerHTML = `<h2>Your bag is empty</h2><button class="btn btn-solid cta" id="keep">Shop</button>`;
+    return;
+  }
+  const subtotal = ids.reduce((a, id) => a + productById(id).price * cart[id], 0);
+  const ship = subtotal >= 50 ? 0 : 5;
+  body.innerHTML = `<h2>Your bag</h2>
+    ${ids.map((id) => { const p = productById(id); return `<div class="cart-item" data-id="${id}">
       <div class="thumb"><i></i></div>
       <div><h4>${p.name}</h4><small>${p.size}</small>
         <div class="qty"><button data-d="-1" aria-label="Remove one">−</button><span>${cart[id]}</span><button data-d="1" aria-label="Add one">+</button></div></div>
-      <div class="amt">${money(p.price * cart[id])}</div></div>`;
-  }).join('');
-  const subtotal = ids.reduce((a, id) => a + productById(id).price * cart[id], 0);
-  const ship = subtotal >= 50 ? 0 : 5;
-  sum.innerHTML = `<div><span>Subtotal</span><span>${money(subtotal)}</span></div>
-    <div><span>Shipping</span><span>${ship ? money(ship) : 'Free'}</span></div>
-    <div class="total"><span>Total</span><span>${money(subtotal + ship)}</span></div>`;
-  $('#checkoutBtn').disabled = false;
+      <div class="amt">${money(p.price * cart[id])}</div></div>`; }).join('')}
+    <div class="cart-sum">
+      <div><span>Shipping</span><span>${ship ? money(ship) : 'Free'}</span></div>
+      <div class="total"><span>Total</span><span>${money(subtotal + ship)}</span></div></div>
+    <button class="btn btn-solid cta" id="checkout">Checkout</button>
+    <button class="link" id="keep">Keep shopping</button>
+    <p class="fine">Concept preview · no payment taken</p>`;
 }
 
-$('#cartList').addEventListener('click', (e) => {
-  const b = e.target.closest('button[data-d]'); if (!b) return;
-  const id = b.closest('.cart-item').dataset.id;
-  cart[id] = (cart[id] || 0) + Number(b.dataset.d);
-  if (cart[id] <= 0) delete cart[id];
-  saveCart(); renderCart();
+/* ------------------------------------------------------------------ funnel state */
+let state = { step: 'hero', cat: null, pi: 0 };
+const stack = [];
+let t2 = 0, t2T = 0;      // hero -> category fly-through (0..1), time driven so it can rewind
+let f = 0, fT = 0;        // bag finale (0..1)
+let stepAt = performance.now();
+let insideAt = 0;
+let molApplied = false, molBusy = false, desiredMol = false;
+
+const sc = createScene($('#gl'));
+const PANEL = { hero: 'hero', cats: 'cats', product: 'shop', inside: 'shop', bag: 'bag', done: 'bag' };
+const curList = () => byCategory(state.cat);
+const curProduct = () => curList()[state.pi];
+
+function go(next) { stack.push({ ...state }); state = { ...state, ...next }; apply(); }
+function back() {
+  if (!stack.length) return;
+  state = stack.pop(); apply();
+}
+
+function apply() {
+  const { step } = state;
+  stepAt = performance.now();
+  document.body.dataset.step = step;
+  $$('.step').forEach((el) => el.classList.toggle('on', el.dataset.panel === PANEL[step]));
+  t2T = step === 'hero' ? 0 : 1;
+  fT = step === 'bag' || step === 'done' ? 1 : 0;
+
+  const side = step === 'product' || step === 'inside' || step === 'bag' || step === 'done';
+  sc.set('product', side ? 1 : 0);
+  updateShift();
+  sc.setAutoSpin(step === 'product');
+  requestMol(step === 'inside');
+  if (step === 'inside') insideAt = performance.now();
+
+  if (step === 'product' || step === 'inside') showProduct(state.pi, true);
+  if (step === 'product') { const h = $('#hint'); h.classList.add('show'); clearTimeout(h._t); h._t = setTimeout(() => h.classList.remove('show'), 5000); }
+  if (step === 'bag' || step === 'done') renderBag();
+  clearHot();
+}
+
+function updateShift() {
+  const side = ['product', 'inside', 'bag', 'done'].includes(state.step);
+  sc.set('shiftX', side && !narrow() ? 1 : 0);
+  sc.set('shiftY', side && narrow() ? (state.step === 'bag' || state.step === 'done' ? 2.4 : 1) : 0);
+}
+
+/* product card */
+function buildPills() {
+  $('#pills').innerHTML = curList().map((p, i) => `<button class="pill" role="tab" data-i="${i}" aria-label="${p.name}">${i + 1}</button>`).join('');
+}
+function showProduct(i, instant) {
+  state.pi = i;
+  const p = curProduct(); const card = $('#card');
+  const write = () => {
+    $('#pName').textContent = p.name; $('#pMeta').textContent = `${money(p.price)} · ${p.size}`;
+    $('#mainCta').textContent = state.step === 'inside' ? `Add to bag · ${money(p.price)}` : 'See inside';
+    card.classList.remove('swap');
+  };
+  if (!$('#pills').children.length || $('#pills').dataset.cat !== state.cat) { buildPills(); $('#pills').dataset.cat = state.cat; }
+  $$('.pill').forEach((b, k) => { b.classList.toggle('active', k === i); b.setAttribute('aria-selected', k === i); });
+  sc.setProduct(p);
+  if (instant) write(); else { card.classList.add('swap'); setTimeout(write, 220); }
+}
+
+$('#pills').addEventListener('click', (e) => {
+  const b = e.target.closest('.pill'); if (!b || state.step !== 'product') return;
+  const i = Number(b.dataset.i); if (i !== state.pi) showProduct(i);
 });
-$('#checkoutBtn').addEventListener('click', () => {
-  $('#cartList').innerHTML = '<div class="done"><b>Thank you — order received (mock).</b>This is a concept preview, so nothing was charged and nothing will ship. The real shop can plug into any checkout later.</div>';
-  $('#cartSum').innerHTML = ''; $('#checkoutBtn').disabled = true;
-  cart = {}; saveCart(); $('#cartCount').textContent = 0;
+$('#mainCta').addEventListener('click', () => {
+  if (state.step === 'product') go({ step: 'inside' });
+  else if (state.step === 'inside') {
+    const p = curProduct(); cart[p.id] = (cart[p.id] || 0) + 1; saveCart(); updateBadge(true); go({ step: 'bag' });
+  }
 });
 
-/* ------------------------------------------------------------------ DOM build */
-const elHero = $('#hero'), elCat = $('#cat'), elProds = $('#products'), elCart = $('#cart');
-let activeCategory = null;
+/* categories */
+$('#cats').innerHTML = categories.map((c, i) => `<button class="cat-btn" data-cat="${c.id}"><small>0${i + 1}</small>${c.name}</button>`).join('');
+$('#cats').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-cat]'); if (!b) return;
+  state.cat = b.dataset.cat; $('#pills').dataset.cat = ''; go({ step: 'product', cat: b.dataset.cat, pi: 0 });
+});
 
-function buildCategoryCards() {
-  $('#catCards').innerHTML = categories.map((c, i) => `
-    <button class="cat-card" data-cat="${c.id}">
-      <div><small>0${i + 1}</small><h3>${c.name}</h3><p>${c.blurb}</p></div>
-      <span class="go">Explore ${byCategory(c.id).length} →</span>
-    </button>`).join('');
-}
+/* hero / bag / chrome */
+$('#enter').addEventListener('click', () => { if (state.step === 'hero') go({ step: 'cats' }); });
+$('#back').addEventListener('click', back);
+$('#cartBtn').addEventListener('click', () => { if (state.step !== 'bag' && state.step !== 'done') go({ step: 'bag' }); });
+$('#cartBody').addEventListener('click', (e) => {
+  const q = e.target.closest('button[data-d]');
+  if (q) {
+    const id = q.closest('.cart-item').dataset.id;
+    cart[id] = (cart[id] || 0) + Number(q.dataset.d); if (cart[id] <= 0) delete cart[id];
+    saveCart(); updateBadge(); renderBag(); return;
+  }
+  if (e.target.closest('#checkout')) {
+    cart = {}; saveCart(); updateBadge();
+    stack.length = 0; stack.push({ step: 'hero', cat: null, pi: 0 }, { step: 'cats', cat: null, pi: 0 });
+    state = { ...state, step: 'done' }; apply(); return;
+  }
+  if (e.target.closest('#keep')) { stack.length = 0; stack.push({ step: 'hero', cat: null, pi: 0 }); state = { step: 'cats', cat: null, pi: 0 }; apply(); return; }
+  if (e.target.closest('#restart')) { stack.length = 0; state = { step: 'hero', cat: null, pi: 0 }; apply(); }
+});
 
-function buildCatbar() {
-  $('#catbar').innerHTML = categories.map((c) => `<button data-cat="${c.id}" class="${c.id === activeCategory ? 'active' : ''}">${c.name}</button>`).join('');
-}
-
-function buildProducts(catId) {
-  const list = byCategory(catId);
-  elProds.innerHTML = list.map((p, i) => `
-    <article class="panel" data-id="${p.id}">
-      <div class="sticky">
-        <div class="viewer" role="img" aria-label="${p.name}. Drag to rotate."></div>
-        <aside class="card">
-          <p class="idx">0${i + 1} / 0${list.length}</p>
-          <h3>${p.name}</h3>
-          <p class="line">${p.line}</p>
-          <p class="blurb">${p.blurb}</p>
-          <div class="ing">${p.ingredients.slice(0, 4).map((x) => `<span>${x}</span>`).join('')}</div>
-          <div class="buy"><div class="price">${money(p.price)}<small>${p.size}</small></div>
-            <button class="btn btn-solid add" data-id="${p.id}">Add to bag</button></div>
-        </aside>
-        <p class="hint"></p>
-      </div>
-    </article>`).join('');
-  elProds.hidden = false;
-  elProds.querySelectorAll('.viewer').forEach(bindViewer);
-}
-
-/* ------------------------------------------------------------------ 3D */
-const glCanvas = $('#gl');
-const sc = createScene(glCanvas);
-function resize() { sc.resize(window.innerWidth, window.innerHeight); measure(); }
-
-/* viewer drag (mouse: free tilt + spin; touch: horizontal spin, vertical still scrolls) */
-function bindViewer(el) {
-  let last = null;
-  el.addEventListener('pointerdown', (e) => { last = { x: e.clientX, y: e.clientY }; el.setPointerCapture(e.pointerId); sc.dragStart(); });
-  el.addEventListener('pointermove', (e) => {
-    if (!last) return;
-    sc.drag(e.clientX - last.x, e.clientY - last.y, e.pointerType === 'touch');
-    last = { x: e.clientX, y: e.clientY };
-  });
+/* viewer drag */
+(() => {
+  const el = $('#viewer'); let last = null;
+  el.addEventListener('pointerdown', (e) => { last = { x: e.clientX, y: e.clientY }; el.setPointerCapture(e.pointerId); sc.dragStart(); $('#hint').classList.remove('show'); });
+  el.addEventListener('pointermove', (e) => { if (!last) return; sc.drag(e.clientX - last.x, e.clientY - last.y, false); last = { x: e.clientX, y: e.clientY }; });
   const end = () => { if (last) { last = null; sc.dragEnd(); } };
   el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
-}
+})();
 window.addEventListener('pointermove', (e) => sc.pointer((e.clientX / innerWidth) * 2 - 1, -((e.clientY / innerHeight) * 2 - 1)), { passive: true });
 
-/* ------------------------------------------------------------------ scroll director */
-const M = { cat: { top: 0, h: 0 }, prods: { top: 0, h: 0 }, cart: { top: 0, h: 0 }, panels: [] };
-function measure() {
-  const y = window.scrollY;
-  const r = (el) => { const b = el.getBoundingClientRect(); return { top: b.top + y, h: b.height }; };
-  M.cat = r(elCat); M.cart = r(elCart); M.prods = elProds.hidden ? { top: M.cat.top + M.cat.h, h: 0 } : r(elProds);
-  M.panels = [...elProds.querySelectorAll('.panel')].map(r);
+/* ------------------------------------------------------------------ scroll gate */
+// Scrolling does nothing past a choice: it only makes the next button glow and twitch.
+let gestures = [], lastEvent = 0, lastNudge = 0, hotTimer;
+const nudgeTargets = () => {
+  switch (state.step) {
+    case 'cats': return t2 > 0.86 ? $$('.cat-btn') : [];
+    case 'product': case 'inside': return [$('#mainCta')];
+    case 'bag': return $$('#cartBody .cta');
+    default: return [];
+  }
+};
+function clearHot() { clearTimeout(hotTimer); gestures = []; $$('.hot').forEach((e) => e.classList.remove('hot')); }
+function attempt(dir) {
+  const now = performance.now();
+  if (state.step === 'hero') { if (dir > 0 && now - stepAt > 500) go({ step: 'cats' }); return; }
+  if (dir <= 0 || now - stepAt < 900) return;
+  if (now - lastEvent > 250) gestures.push(now);      // one entry per physical scroll gesture, not per wheel tick
+  lastEvent = now;
+  gestures = gestures.filter((t) => now - t < 8000);
+  if (now - lastNudge < 700) return;
+  lastNudge = now;
+  const hot = gestures.length >= 3;
+  nudgeTargets().forEach((el) => {
+    el.classList.remove('nudge'); void el.offsetWidth; el.classList.add('nudge');
+    if (hot) el.classList.add('hot');
+  });
+  clearTimeout(hotTimer); hotTimer = setTimeout(clearHot, 8000);
 }
+// once the glow flash ends, drop .nudge so a sustained .hot glow can pulse
+document.addEventListener('animationend', (e) => { if (e.animationName === 'glow') e.target.classList.remove('nudge'); });
+window.addEventListener('wheel', (e) => { e.preventDefault(); if (Math.abs(e.deltaY) > 2) attempt(Math.sign(e.deltaY)); }, { passive: false });
+let touchY = null;
+window.addEventListener('touchstart', (e) => { touchY = e.target.closest('#viewer, .cart-panel') ? null : e.touches[0].clientY; }, { passive: true });
+window.addEventListener('touchend', (e) => {
+  if (touchY === null) return;
+  const dy = touchY - e.changedTouches[0].clientY; touchY = null;
+  if (Math.abs(dy) > 28) attempt(Math.sign(dy));
+}, { passive: true });
+window.addEventListener('keydown', (e) => {
+  const onButton = e.target.closest && e.target.closest('button, a');
+  if (e.key === 'ArrowDown' || e.key === 'PageDown' || (e.key === ' ' && !onButton)) { e.preventDefault(); attempt(1); }
+  else if (e.key === 'Escape') back();
+  else if (state.step === 'product' && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
+    const n = curList().length; showProduct((state.pi + (e.key === 'ArrowRight' ? 1 : n - 1)) % n);
+  }
+});
 
-let molApplied = false, molBusy = false, desiredMol = false, activeProduct = products[0].id;
+/* ------------------------------------------------------------------ molecule jump cut */
 function requestMol(on) {
   desiredMol = on;
   if (molBusy || on === molApplied) return;
@@ -138,141 +223,71 @@ function requestMol(on) {
   }, 150);
   setTimeout(() => { molBusy = false; stage.classList.remove('jumpcut'); if (desiredMol !== molApplied) requestMol(desiredMol); }, 360);
 }
-
 function fillMolLabels() {
   const info = sc.getMolecules();
-  [...$('#molUi').querySelectorAll('.mol-label')].forEach((el, i) => {
-    el.querySelector('b').textContent = info[i].name; el.querySelector('i').textContent = info[i].formula; el.querySelector('span').textContent = info[i].note;
-  });
+  $$('.mol-label').forEach((el, i) => { el.querySelector('b').textContent = info[i].name; el.querySelector('i').textContent = info[i].formula; });
 }
-
-const narrow = () => window.innerWidth / window.innerHeight < 0.9;
-let lastCardOn = null;
-
-function direct() {
-  const y = window.scrollY, vh = window.innerHeight;
-  const zoneEnd = M.cat.top + M.cat.h - vh;
-  const t2 = clamp(y / Math.max(zoneEnd, 1));
-  const prodsOn = !elProds.hidden;
-
-  // segment 1→2: logo lift-off, fly through letters, lid opens
-  const seg = { lift: sm(t2, 0.0, 0.2), zoom: sm(t2, 0.1, 0.72), lid: sm(t2, 0.5, 0.8) };
-  const pBlend = prodsOn ? sm(y, zoneEnd + vh * 0.05, zoneEnd + vh * 0.85) : 0;
-
-  // segment 4: finale
-  const f = clamp((y + vh * 0.4 - M.cart.top) / Math.max(M.cart.h - vh * 0.6, 1));
-  const k = (1 - pBlend) * (1 - sm(f, 0, 0.3));
-  const bumpLid = Math.sin(Math.PI * sm(f, 0.12, 0.8)) * 0.8;
-  const bumpLift = Math.sin(Math.PI * sm(f, 0.2, 0.88)) * 0.95;
-  sc.set('lift', Math.max(seg.lift * k, bumpLift));
-  sc.set('zoom', seg.zoom * k);
-  sc.set('lid', Math.max(seg.lid * k, bumpLid));
-  sc.set('product', pBlend);
-  sc.set('fin', sm(f, 0, 0.5));
-
-  // product panels
-  let idx = -1;
-  if (prodsOn) {
-    M.panels.forEach((p, i) => { if (y >= p.top - vh * 0.55) idx = i; });
-  }
-  const inProd = prodsOn && idx >= 0 && y < M.cart.top - vh * 0.5;
-  let pt = 0;
-  if (inProd) { const p = M.panels[idx]; pt = clamp((y - p.top) / Math.max(p.h - vh, 1)); }
-  if (inProd) {
-    const pid = elProds.querySelectorAll('.panel')[idx].dataset.id;
-    if (pid !== activeProduct) { activeProduct = pid; sc.setProduct(productById(pid)); }
-  }
-  sc.setAutoSpin(inProd);
-  // molecule phase: ~175vh of scroll (jar ~80vh before it, short tail after)
-  const MOL_A = 0.296, MOL_B = 0.944;
-  requestMol(inProd && pt >= MOL_A && pt <= MOL_B);
-  sc.setMolProgress(clamp((pt - MOL_A) / (MOL_B - MOL_A)));
-
-  // viewer layout shifts (desktop: scene moves right of the card; mobile: scene moves up)
-  const showSide = inProd || f > 0.05;
-  sc.set('shiftX', showSide && !narrow() ? 1 : 0);
-  sc.set('shiftY', showSide && narrow() ? 1 : 0);
-
-  // UI visibility
-  $('.hero-copy').style.opacity = 1 - sm(t2, 0, 0.07);
-  $('#scrollCue').style.opacity = 1 - sm(t2, 0, 0.04);
-  const cardsOn = t2 > 0.84 && !inProd && pBlend < 0.2 && f < 0.2;
-  if (cardsOn !== lastCardOn) {
-    $('#catCards').classList.toggle('on', cardsOn); $('#catIntro').classList.toggle('on', cardsOn); lastCardOn = cardsOn;
-  }
-  $('#catbar').classList.toggle('on', inProd);
-  $('#cartPanel').classList.toggle('on', f > 0.28);
-  $('#molUi').classList.toggle('on', molApplied && inProd);
-  const hintText = molApplied ? 'Drag to explore · Scroll to continue' : 'Drag to rotate · Scroll for the molecules';
-  document.querySelectorAll('.hint').forEach((h, i) => {
-    if (h.textContent !== hintText) h.textContent = hintText;
-    h.style.opacity = i === idx && !molApplied ? 1 : 0;
-  });
-  document.querySelectorAll('.panel .card').forEach((c, i) => { c.style.opacity = i === idx && inProd ? 1 : 0; c.style.pointerEvents = i === idx && inProd ? 'auto' : 'none'; });
-}
-
 function labels() {
+  const show = molApplied && state.step === 'inside';
+  $('#molUi').classList.toggle('on', show);
   if (!molApplied) return;
   const a = clamp(sc.molIn * 1.6 - 0.4);
-  $('#molUi').querySelectorAll('.mol-label').forEach((el, i) => {
+  $$('.mol-label').forEach((el, i) => {
     const { x, y } = sc.molScreen(i);
-    el.style.transform = `translate(${x - 110 * (el.offsetWidth / 220)}px, ${y}px)`;
-    el.style.left = '0px'; el.style.opacity = a;
+    el.style.transform = `translate(${x - el.offsetWidth / 2}px, ${y}px)`; el.style.opacity = a;
   });
 }
 
-/* ------------------------------------------------------------------ events */
-$('#catCards').addEventListener('click', (e) => {
-  const b = e.target.closest('[data-cat]'); if (!b) return; chooseCategory(b.dataset.cat, true);
-});
-$('#catbar').addEventListener('click', (e) => {
-  const b = e.target.closest('[data-cat]'); if (!b || b.dataset.cat === activeCategory) return; chooseCategory(b.dataset.cat, false);
-});
-document.addEventListener('click', (e) => {
-  const add = e.target.closest('.add');
-  if (add) {
-    const id = add.dataset.id; cart[id] = (cart[id] || 0) + 1; saveCart(); renderCart();
-    add.classList.add('added'); add.textContent = 'Added ✓'; setTimeout(() => { add.classList.remove('added'); add.textContent = 'Add to bag'; }, 1400);
-    toast(`${productById(id).name} added to your bag`);
-  }
-});
-$('#cartBtn').addEventListener('click', () => window.scrollTo({ top: M.cart.top + M.cart.h - innerHeight, behavior: 'smooth' }));
-document.querySelector('[data-go="cat"]').addEventListener('click', (e) => { e.preventDefault(); window.scrollTo({ top: Math.max(M.cat.top + M.cat.h - innerHeight, 0), behavior: 'smooth' }); });
-
-function chooseCategory(id, smooth) {
-  activeCategory = id; buildProducts(id); buildCatbar(); measure();
-  activeProduct = ''; // force product refresh
-  window.scrollTo({ top: M.prods.top, behavior: smooth ? 'smooth' : 'auto' });
-}
-
-let ticking = false;
-window.addEventListener('scroll', () => { ticking = true; }, { passive: true });
-window.addEventListener('resize', () => { resize(); ticking = true; });
-
-/* ------------------------------------------------------------------ boot */
-buildCategoryCards(); renderCart();
-$('#cartCount').textContent = cartCount();
-document.body.classList.add('loading');
-window.scrollTo(0, 0); if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
-
-(async () => {
-  try {
-    await Promise.race([
-      Promise.all([document.fonts.load('600 40px Montserrat'), document.fonts.load('700 40px Montserrat'), document.fonts.load('400 30px Montserrat'), document.fonts.load('500 30px Montserrat')]),
-      new Promise((r) => setTimeout(r, 2500)),
-    ]);
-  } catch { /* fonts optional */ }
-  sc.setProduct(products[0]); activeProduct = products[0].id;
+/* ------------------------------------------------------------------ frame loop */
+function boot() {
   resize();
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   let last = performance.now();
   const loop = (now) => {
-    const dt = (now - last) / 1000; last = now;
-    direct();
+    const dt = Math.min((now - last) / 1000, 0.25); last = now;
+    t2 = approach(t2, t2T, dt / 3.8);
+    f = approach(f, fT, dt / 3.2);
+
+    // hero -> category fly-through: logo lifts off, camera flies through the letters, lid opens
+    const k = state.step === 'hero' || state.step === 'cats' ? 1 : 0;
+    const seg = { lift: sm(t2, 0, 0.2), zoom: sm(t2, 0.1, 0.72), lid: sm(t2, 0.5, 0.8) };
+    // bag finale: lid lifts, logo floats forward and settles back
+    const bumpLid = Math.sin(Math.PI * sm(f, 0.1, 0.9)) * 0.8;
+    const bumpLift = Math.sin(Math.PI * sm(f, 0.15, 0.95)) * 0.95;
+    sc.set('lift', Math.max(seg.lift * k, bumpLift));
+    sc.set('zoom', seg.zoom * k);
+    sc.set('lid', Math.max(seg.lid * k, bumpLid));
+    sc.set('fin', sm(f, 0, 0.5));
+
+    const showCats = state.step === 'cats' && t2 > 0.86;
+    $('.step[data-panel="cats"]').classList.toggle('show', showCats);
+    $('#cats').inert = !showCats;
+
+    sc.setMolProgress(state.step === 'inside' ? clamp((performance.now() - insideAt) / 14000) : 0);
     sc.update(dt); labels();
     requestAnimationFrame(loop);
   };
-  direct(); requestAnimationFrame(loop);
-  setTimeout(() => { document.body.classList.remove('loading'); reduce ? sc.skipIntro() : sc.start(); }, 350);
-  window.__nb = { sc, chooseCategory, direct, measure };
+  requestAnimationFrame(loop);
+  setTimeout(() => {
+    document.body.classList.remove('loading');
+    $('.step[data-panel="hero"]').classList.add('on');
+    reduce ? sc.skipIntro() : sc.start();
+  }, 350);
+}
+function resize() { sc.resize(window.innerWidth, window.innerHeight); updateShift(); }
+window.addEventListener('resize', resize);
+
+/* ------------------------------------------------------------------ boot */
+updateBadge();
+document.body.classList.add('loading');
+(async () => {
+  try {
+    await Promise.race([
+      Promise.all([600, 700, 400, 500].map((w) => document.fonts.load(`${w} 40px Montserrat`))),
+      new Promise((r) => setTimeout(r, 2500)),
+    ]);
+  } catch { /* fonts optional */ }
+  sc.setProduct(products[0]);
+  boot();
+  window.__nb = { sc, go, back, apply, get state() { return state; }, get t2() { return t2; }, get f() { return f; } };
 })();

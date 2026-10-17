@@ -11,24 +11,28 @@ npm run dev      # http://localhost:5173
 npm run build    # static site in dist/ (deploy anywhere: Vercel, Netlify, GitHub Pages…)
 ```
 
-## The scroll sequence
+## The funnel
 
-| Scroll stage | What happens |
-|---|---|
-| Hero | Jar drops in and spins into place, logo faces the camera |
-| Scroll 1 → categories | NB monogram lifts off the label, camera flies through the letters, lid opens onto the cream |
-| Pick a category → product | Jar pulls back to a rotatable viewer (drag / touch). Scrolling deeper triggers a jump cut to the molecule view with glowing ingredient labels |
-| Bag (bottom) | Finale: lid lifts, logo floats forward and settles back, camera pulls out |
+The page doesn't scroll. Each step waits for a choice, and **Back** rewinds the animation one step.
+
+| Step | What happens | Next |
+|---|---|---|
+| Hero | Jar drops in and spins into place | Scroll once, or press **Shop** |
+| Category | Logo lifts off, camera flies through the letters, lid opens | Pick Face / Body / Hair. Scrolling does nothing except make the buttons glow and twitch |
+| Product | Rotatable jar (drag / touch), pills 1-3 switch product | **See inside** |
+| Inside | Jump cut to the molecule view with glowing ingredient names | **Add to bag** |
+| Bag | Lid lifts, logo floats forward and settles back, camera pulls out | **Checkout** (mock) |
 
 ## Files
 
 - `src/scene.js` — the 3D scene (jar, monogram, leaf-shadow lighting, molecules, camera rig)
-- `src/main.js` — scroll director, cart, UI wiring
+- `src/main.js` — funnel state machine (steps, history/back, scroll gate), cart, UI wiring
+- `src/logo-shapes.json` — NB monogram traced from the brand logo; regenerate with `python3 tools/trace_logo.py <logo.png>` (needs `opencv-python-headless`)
 - `src/data.js` — placeholder catalogue (3 categories × 3 products); edit this for real products
 - `src/molecule.js` — procedural ball-and-stick molecule generator (illustrative structures)
 
 ## Swapping in real brand assets
 
-- Logo: replace `monogramShapes()` in `src/scene.js` (or load an SVG with `SVGLoader`).
+- Logo: run `tools/trace_logo.py` on a new PNG (or swap in a hand-made SVG via `SVGLoader`).
 - Label art: `labelTexture()` in `src/scene.js`.
 - Products, prices, ingredients and molecules: `src/data.js`.
