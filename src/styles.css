@@ -77,7 +77,7 @@ body.dark .catbar { background: rgba(20,18,16,.55); border-color: rgba(255,255,2
 body.dark .catbar button.active { background: var(--cream); color: var(--ink); }
 
 /* products */
-.panel { position: relative; height: 280vh; }
+.panel { position: relative; height: 370vh; }
 .panel .sticky { pointer-events: none; }
 .viewer { position: absolute; left: 34%; right: 2%; top: 14%; bottom: 8%; pointer-events: auto; cursor: grab; touch-action: pan-y; -webkit-user-select: none; user-select: none; }
 .viewer:active { cursor: grabbing; }
