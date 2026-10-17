@@ -12,6 +12,10 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 a { color: inherit; text-decoration: none; }
 h1, h2 { font-weight: 700; letter-spacing: -0.01em; line-height: 1.04; }
 
+/* checkout backdrop: the brand showcase photo behind the tub being purchased */
+#backdrop { position: fixed; inset: 0; z-index: 0; opacity: 0; transition: opacity 1.2s ease; pointer-events: none;
+  background: linear-gradient(rgba(239,233,225,.18), rgba(239,233,225,.18)), url('/showcase.jpg') 50% 60% / cover no-repeat; filter: blur(1.2px) saturate(.96); transform: scale(1.03); }
+body[data-step="bag"] #backdrop, body[data-step="done"] #backdrop { opacity: 1; }
 #stage { position: fixed; inset: 0; z-index: 0; }
 #gl { width: 100%; height: 100%; display: block; }
 #stage.jumpcut { animation: jumpcut .34s ease-in-out; }
@@ -32,8 +36,9 @@ body:not(.loading) #preloader { opacity: 0; visibility: hidden; }
 .nav { position: fixed; top: 0; left: 0; right: 0; z-index: 50; display: flex; align-items: center; justify-content: space-between; padding: 22px var(--pad); transition: color .5s; pointer-events: none; }
 .nav > * { pointer-events: auto; }
 body.dark .nav, body.dark .back { color: #f4ede2; }
-.nav-brand { font-weight: 800; font-size: 26px; letter-spacing: -.04em; display: flex; align-items: baseline; gap: 12px; }
-.nav-brand span { font-size: 10px; font-weight: 600; letter-spacing: .34em; text-transform: uppercase; }
+.nav-brand { display: block; line-height: 0; }
+.nav-brand img { height: 44px; width: auto; display: block; transition: filter .5s; }
+body.dark .nav-brand img { filter: invert(1); }
 .cart-btn { min-height: 44px; display: inline-flex; align-items: center; gap: 8px; letter-spacing: .24em; text-transform: uppercase; font-size: 11px; font-weight: 600; }
 .cart-btn b { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 99px; background: var(--ink); color: var(--cream); font-size: 11px; letter-spacing: 0; transition: transform .4s var(--ease), background .4s, color .4s; }
 body.dark .cart-btn b { background: var(--cream); color: var(--ink); }
@@ -47,6 +52,25 @@ body:not([data-step="hero"]) .back { opacity: 1; visibility: visible; transform:
 body.dark .back { background: rgba(20,18,16,.55); border-color: rgba(255,255,255,.18); }
 body.dark .back:hover { background: var(--cream); color: var(--ink); }
 
+/* no-WebGL fallback: a calm cream page with the logo, plus a small explanatory note */
+#fallback { position: fixed; inset: 0; z-index: 1; display: none; place-items: center; pointer-events: none; transition: opacity .6s; }
+body.no3d #fallback { display: grid; }
+body.no3d.dark #fallback, body[data-step="bag"] #fallback, body[data-step="done"] #fallback { opacity: 0; }
+#fallback img { width: min(52vw, 360px); height: auto; opacity: .92; }
+body.dark { background: #0b0a09; }
+.notice { position: fixed; z-index: 60; left: 50%; top: 126px; transform: translateX(-50%); width: min(92vw, 460px); pointer-events: none; text-align: center; font-size: 11px; line-height: 1.5; letter-spacing: .04em; color: var(--muted); }
+.notice small { display: block; margin-top: 4px; font-size: 9px; opacity: .6; word-break: break-word; }
+body.dark .notice { opacity: 0; }
+.notice[hidden] { display: none; }
+
+/* cream curtain for Start over */
+#curtain { position: fixed; inset: 0; z-index: 95; background: var(--cream); opacity: 0; pointer-events: none; }
+#curtain.go { animation: curtain .95s ease-in-out; }
+@keyframes curtain { 0% { opacity: 0 } 40%, 55% { opacity: 1 } 100% { opacity: 0 } }
+
+/* black fade used by the See inside sequence (above the canvas, below the UI) */
+#fade { position: fixed; inset: 0; z-index: 5; background: #000; opacity: 0; pointer-events: none; }
+
 /* steps (panels) */
 .step { position: fixed; inset: 0; z-index: 10; pointer-events: none; opacity: 0; visibility: hidden; transition: opacity .6s, visibility .6s; }
 .step.on { opacity: 1; visibility: visible; }
@@ -58,24 +82,24 @@ body.dark .card .btn-solid { background: var(--cream); color: var(--ink); }
 .btn:hover:not(:disabled) { transform: translateY(-2px); }
 .btn:disabled { opacity: .35; cursor: not-allowed; }
 
-/* gating feedback: glow + twitch when someone keeps trying to scroll past a choice */
+/* gating feedback: a soft sway + warm glow on the button that needs pressing (no sharp shaking) */
 .cta, .cat-btn { --g: 240,184,98; }
-.nudge { animation: twitch .55s cubic-bezier(.36,.07,.19,.97) both, glow .9s ease-out backwards; }
-.hot:not(.nudge) { animation: hotpulse 1.6s ease-in-out infinite; }
+.nudge { animation: sway 1s cubic-bezier(.45,.05,.35,1) both, glow 1.3s ease-out backwards; }
+.hot:not(.nudge) { animation: hotpulse 2.6s ease-in-out infinite; }
+.hot { box-shadow: 0 0 0 1px rgba(var(--g), .5), 0 0 16px rgba(var(--g), .35), 0 0 34px rgba(var(--g), .2); }
 @keyframes hotpulse {
-  0%, 100% { box-shadow: 0 0 0 1px rgba(var(--g), .7), 0 0 16px rgba(var(--g), .5), 0 0 38px rgba(var(--g), .28); }
-  50% { box-shadow: 0 0 0 1px rgba(var(--g), 1), 0 0 30px rgba(var(--g), .9), 0 0 70px rgba(var(--g), .55); }
+  0%, 100% { box-shadow: 0 0 0 1px rgba(var(--g), .4), 0 0 12px rgba(var(--g), .28), 0 0 28px rgba(var(--g), .14); }
+  50% { box-shadow: 0 0 0 1px rgba(var(--g), .75), 0 0 22px rgba(var(--g), .5), 0 0 46px rgba(var(--g), .28); }
 }
-.hot { box-shadow: 0 0 0 1px rgba(var(--g), .9), 0 0 24px rgba(var(--g), .75), 0 0 56px rgba(var(--g), .45); }
-@keyframes twitch {
-  10%, 90% { transform: translate3d(-1px, 0, 0) rotate(-.3deg); }
-  20%, 80% { transform: translate3d(3px, 0, 0) rotate(.4deg); }
-  30%, 50%, 70% { transform: translate3d(-5px, 0, 0) rotate(-.6deg); }
-  40%, 60% { transform: translate3d(5px, 0, 0) rotate(.6deg); }
+@keyframes sway {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  25% { transform: translate3d(-2px, 0, 0); }
+  55% { transform: translate3d(2px, 0, 0); }
+  80% { transform: translate3d(-1px, 0, 0); }
 }
 @keyframes glow {
   0% { box-shadow: 0 0 0 0 rgba(var(--g), 0); }
-  30% { box-shadow: 0 0 0 1px rgba(var(--g), 1), 0 0 30px rgba(var(--g), .9), 0 0 70px rgba(var(--g), .55); }
+  40% { box-shadow: 0 0 0 1px rgba(var(--g), .7), 0 0 18px rgba(var(--g), .5), 0 0 40px rgba(var(--g), .26); }
   100% { box-shadow: 0 0 0 0 rgba(var(--g), 0); }
 }
 
@@ -96,7 +120,8 @@ body.dark .card .btn-solid { background: var(--cream); color: var(--ink); }
 /* product card + viewer */
 .viewer { position: absolute; left: 34%; right: 2%; top: 14%; bottom: 8%; cursor: grab; touch-action: none; -webkit-user-select: none; user-select: none; }
 .viewer:active { cursor: grabbing; }
-.card { position: absolute; left: var(--pad); top: 50%; transform: translateY(-46%); width: min(340px, 36vw); padding: 30px; background: rgba(239,233,225,.7); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid rgba(14,14,14,.12); border-radius: 4px; transition: background .5s, color .5s, border-color .5s; }
+.card { position: absolute; left: var(--pad); top: 50%; transform: translateY(-46%); width: min(340px, 36vw); padding: 30px; background: rgba(239,233,225,.7); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid rgba(14,14,14,.12); border-radius: 4px; transition: background .5s, color .5s, border-color .5s, opacity 1s; }
+body.cinema .step .card { opacity: 0; pointer-events: none; }
 body.dark .card { background: rgba(18,16,14,.6); border-color: rgba(255,255,255,.14); color: #f4ede2; }
 .card h2 { font-size: clamp(1.6rem, 2.6vw, 2.3rem); margin-bottom: 8px; transition: opacity .25s; }
 .card .meta { font-size: 13px; font-weight: 600; letter-spacing: .14em; opacity: .65; margin-bottom: 22px; transition: opacity .25s; }
@@ -119,7 +144,7 @@ body[data-step="product"] .hint.show { opacity: 1; }
 .mol-foot { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); font-size: 9px; letter-spacing: .3em; text-transform: uppercase; opacity: .4; white-space: nowrap; }
 
 /* bag */
-.cart-panel { position: absolute; left: var(--pad); top: 50%; transform: translateY(-46%); width: min(460px, 100% - 2 * var(--pad)); max-height: 78svh; overflow: auto; padding: 32px; background: rgba(239,233,225,.76); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(14,14,14,.12); border-radius: 4px; touch-action: pan-y; }
+.cart-panel { position: absolute; left: var(--pad); top: 50%; transform: translateY(-46%); width: min(460px, 100% - 2 * var(--pad)); max-height: 78svh; overflow: auto; padding: 32px; background: rgba(239,233,225,.95); backdrop-filter: blur(26px); -webkit-backdrop-filter: blur(26px); border: 1px solid rgba(14,14,14,.12); border-radius: 4px; touch-action: pan-y; }
 .cart-panel h2 { font-size: clamp(1.8rem, 3.2vw, 2.6rem); margin-bottom: 18px; }
 .cart-empty { font-size: 14px; line-height: 1.7; color: var(--muted); margin-bottom: 20px; }
 .cart-item { display: grid; grid-template-columns: 52px 1fr auto; gap: 14px; align-items: center; padding: 12px 0; border-bottom: 1px solid rgba(14,14,14,.12); }
@@ -143,7 +168,7 @@ body[data-step="product"] .hint.show { opacity: 1; }
 
 /* ---------- mobile ---------- */
 @media (max-width: 860px) {
-  .nav-brand span { display: none; }
+  .nav-brand img { height: 34px; }
   .back { top: 66px; }
   .back span { display: none; }
   .back { padding: 0 14px; }

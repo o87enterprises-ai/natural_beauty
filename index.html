@@ -14,10 +14,15 @@
 <body data-step="hero">
   <div id="preloader" aria-hidden="true"><span>NB</span><i></i></div>
 
+  <div id="backdrop" aria-hidden="true"></div>
   <div id="stage"><canvas id="gl" aria-hidden="true"></canvas></div>
+  <div id="fade" aria-hidden="true"></div>
+  <div id="fallback" aria-hidden="true"><img src="/logo.png" alt="" /></div>
+  <p id="notice" class="notice" role="status" hidden></p>
+  <div id="curtain" aria-hidden="true"></div>
 
   <header class="nav">
-    <a class="nav-brand" href="/" aria-label="Natural Beauty home">NB<span>Natural Beauty</span></a>
+    <a class="nav-brand" href="/" aria-label="Natural Beauty home"><img src="/logo.png" alt="Natural Beauty" width="85" height="44" /></a>
     <button class="cart-btn" id="cartBtn" aria-label="Open bag">Bag <b id="cartCount">0</b></button>
   </header>
 

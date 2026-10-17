@@ -10,6 +10,9 @@ const ease = (t) => t * t * (3 - 2 * t);
 const easeOut = (t) => 1 - Math.pow(1 - t, 3);
 const damp = (cur, target, rate, dt) => lerp(cur, target, 1 - Math.exp(-rate * dt));
 
+// Lighter rendering on phones: less GPU memory means fewer failed or lost WebGL contexts.
+const LITE = typeof window !== 'undefined' && ((window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || Math.min(window.innerWidth, window.innerHeight) < 700);
+
 const R = 1;            // tub radius
 const BODY_H = 1.1;
 const TOP = BODY_H / 2;
@@ -34,8 +37,8 @@ function wrapText(ctx, text, x, y, maxW, lh) {
 }
 
 function labelTexture(p, anisotropy) {
-  const W = 4096, H = 720;
-  const c = makeCanvas(W, H); const ctx = c.getContext('2d');
+  const W = 4096, H = 720, q = LITE ? 0.5 : 1;
+  const c = makeCanvas(W * q, H * q); const ctx = c.getContext('2d'); ctx.scale(q, q);
   ctx.fillStyle = CREAM; ctx.fillRect(0, 0, W, H);
   // subtle paper grain
   for (let i = 0; i < 9000; i++) {
@@ -94,17 +97,22 @@ function labelTexture(p, anisotropy) {
 }
 
 function creamTexture() {
-  const S = 512; const c = makeCanvas(S, S); const ctx = c.getContext('2d');
-  const g = ctx.createRadialGradient(S * 0.4, S * 0.35, 20, S / 2, S / 2, S * 0.7);
+  const S = LITE ? 1024 : 2048, k = S / 512; const c = makeCanvas(S, S); const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(S * 0.4, S * 0.35, 20 * k, S / 2, S / 2, S * 0.7);
   g.addColorStop(0, '#fbf7f0'); g.addColorStop(1, '#e6dccb');
   ctx.fillStyle = g; ctx.fillRect(0, 0, S, S);
-  ctx.lineWidth = 7; ctx.lineCap = 'round';
+  ctx.lineWidth = 7 * k; ctx.lineCap = 'round';
   for (let i = 0; i < 26; i++) {
-    const rad = 14 + i * 9; const a0 = i * 0.6;
+    const rad = (14 + i * 9) * k; const a0 = i * 0.6;
     ctx.strokeStyle = i % 2 ? 'rgba(255,255,255,.55)' : 'rgba(190,172,146,.35)';
-    ctx.beginPath(); ctx.arc(S / 2 + Math.cos(i) * 6, S / 2 + Math.sin(i) * 6, rad, a0, a0 + 3.8 + (i % 3) * 0.4); ctx.stroke();
+    ctx.beginPath(); ctx.arc(S / 2 + Math.cos(i) * 6 * k, S / 2 + Math.sin(i) * 6 * k, rad, a0, a0 + 3.8 + (i % 3) * 0.4); ctx.stroke();
   }
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+  // fine grain so the cream still reads as a surface when the camera is close
+  for (let i = 0; i < 60000; i++) {
+    ctx.fillStyle = `rgba(${Math.random() < 0.5 ? '255,255,255' : '170,150,120'},${Math.random() * 0.07})`;
+    ctx.fillRect(Math.random() * S, Math.random() * S, 2 + Math.random() * 4, 2 + Math.random() * 4);
+  }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
 }
 
 function stoneTexture() {
@@ -167,8 +175,15 @@ function monogramShapes() {
 
 /* ---------- main factory ---------- */
 export function createScene(canvas) {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  // Try the best settings first, then progressively gentler ones before giving up.
+  let renderer = null, lastErr = null;
+  for (const opts of [{ antialias: true, powerPreference: 'high-performance' }, { antialias: false, powerPreference: 'default' }, { antialias: false, powerPreference: 'low-power' }]) {
+    try { renderer = new THREE.WebGLRenderer({ canvas, alpha: true, ...opts }); break; } catch (err) { lastErr = err; }
+  }
+  if (!renderer) throw lastErr || new Error('WebGL unavailable');
+  renderer.setClearColor(0x000000, 0);
+  canvas.addEventListener('webglcontextlost', (e) => e.preventDefault(), false);   // lets the browser restore it
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, LITE ? 1.5 : 2));
   renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
   const anisotropy = renderer.capabilities.getMaxAnisotropy();
@@ -191,6 +206,11 @@ export function createScene(canvas) {
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 40), new THREE.MeshStandardMaterial({ color: '#ece5db', roughness: 0.85 }));
   floor.rotation.x = -Math.PI / 2; floor.position.y = -0.93; floor.receiveShadow = true; stage.add(floor);
 
+  // invisible floor that only catches the tub's shadow, used when the stage is swapped for a photo backdrop
+  const catcher = new THREE.Mesh(new THREE.PlaneGeometry(14, 14), new THREE.ShadowMaterial({ opacity: 0.32 }));
+  catcher.rotation.x = -Math.PI / 2; catcher.position.y = -0.58; catcher.receiveShadow = true; catcher.visible = false; scene.add(catcher);
+  let backdrop = false;
+
   const stoneMap = stoneTexture(); stoneMap.repeat.set(2, 1);
   const stoneMat = new THREE.MeshStandardMaterial({ map: stoneMap, roughness: 0.95, color: '#ddd5c8' });
   const plinth = new THREE.Mesh(new RoundedBoxGeometry(3.4, 0.36, 2.4, 6, 0.06), stoneMat);
@@ -202,7 +222,7 @@ export function createScene(canvas) {
 
   const spot = new THREE.SpotLight('#fff3e0', 260, 60, 0.62, 1, 1.6);
   spot.position.set(-3.5, 5.5, 8); spot.target.position.set(0, 0.2, -1);
-  spot.castShadow = true; spot.shadow.mapSize.set(2048, 2048); spot.shadow.bias = -0.0004; spot.shadow.normalBias = 0.02; spot.shadow.radius = 5;
+  spot.castShadow = true; spot.shadow.mapSize.set(LITE ? 1024 : 2048, LITE ? 1024 : 2048); spot.shadow.bias = -0.0004; spot.shadow.normalBias = 0.02; spot.shadow.radius = 5;
   spot.map = leafLightMap(); scene.add(spot, spot.target);
   const fill = new THREE.HemisphereLight('#fff6ea', '#cfc3b0', 0.55); scene.add(fill);
   const lightsJar = [spot, fill];
@@ -323,8 +343,9 @@ export function createScene(canvas) {
   molRoot.add(motes);
 
   /* --- state --- */
-  const d = { lift: 0, zoom: 0, lid: 0, product: 0, fin: 0, shiftX: 0, shiftY: 0, molIn: 0 };
-  const target = { lift: 0, zoom: 0, lid: 0, product: 0, fin: 0, shiftX: 0, shiftY: 0 };
+  const d = { lift: 0, zoom: 0, lid: 0, product: 0, fin: 0, shiftX: 0, shiftY: 0, bev: 0, dive: 0, molIn: 0 };
+  const target = { lift: 0, zoom: 0, lid: 0, product: 0, fin: 0, shiftX: 0, shiftY: 0, bev: 0, dive: 0 };
+  let molReveal = [0, 0, 0];
   let introT = 0, introOn = false, introDur = 3.4;
   let time = 0, mol = false, userRot = 0, userTilt = 0, velRot = 0, dragging = false, lastDrag = 0, autoSpin = false;
   let molRotX = 0, molRotY = 0;
@@ -341,7 +362,7 @@ export function createScene(canvas) {
   }
 
   function layoutMolecules() {
-    const pos = isNarrow ? [[0, 2.4, 0], [0, 0.2, 0], [0, -2.0, 0]] : [[-1.9, 0.9, 0], [1.9, 0.9, 0], [0, -0.85, 0]];
+    const pos = isNarrow ? [[0, 2.7, 0], [0, 0.5, 0], [0, -1.7, 0]] : [[-0.9, 0.9, 0], [2.9, 0.9, 0], [1.0, -0.85, 0]];
     molScale = isNarrow ? 0.5 : 0.72;
     molSlots.forEach((g, i) => { g.userData.base = new THREE.Vector3(...pos[i]); g.position.copy(g.userData.base); g.scale.setScalar(molScale); });
   }
@@ -355,18 +376,20 @@ export function createScene(canvas) {
   const heroPos = new THREE.Vector3(0, 0.6, 6.4), heroTgt = new THREE.Vector3(0, 0.1, 0);
   const P1 = new THREE.Vector3(0, 0.6, 3.0), T1 = new THREE.Vector3(0, 0.2, 0);
   const P2 = new THREE.Vector3(0, 3.6, 2.7), T2 = new THREE.Vector3(0, 0.35, -0.2);
-  const Pp = new THREE.Vector3(0, 0.55, 7.6), Tp = new THREE.Vector3(0, 0, 0);
-  const Pf = new THREE.Vector3(0.7, 1.15, 7.0), Tf = new THREE.Vector3(0, 0.15, 0);
+  const Pp = new THREE.Vector3(0, 0.85, 7.6), Tp = new THREE.Vector3(0, 0.3, 0);
+  const Pf = new THREE.Vector3(0.7, 1.15, 7.0), Tf = new THREE.Vector3(0, 0.5, 0);
+  const PB = new THREE.Vector3(0, 5.2, 0.55), TB = new THREE.Vector3(0, 0.45, 0);     // bird's-eye above the open tub
+  const PD = new THREE.Vector3(0, 1.5, 0.12), TD = new THREE.Vector3(0, 0.5, 0);      // down into the cream
 
   function update(dt) {
     dt = Math.min(dt, 0.4); time += dt;
-    ['lift', 'zoom', 'lid', 'product', 'fin', 'shiftX', 'shiftY'].forEach((k) => { d[k] = damp(d[k], target[k], k === 'shiftX' || k === 'shiftY' ? 4 : 3, dt); });
+    ['lift', 'zoom', 'lid', 'product', 'fin', 'shiftX', 'shiftY', 'bev', 'dive'].forEach((k) => { d[k] = damp(d[k], target[k], k === 'shiftX' || k === 'shiftY' ? 4 : k === 'bev' || k === 'dive' ? 5 : 3, dt); });
     mouse.sx = damp(mouse.sx, mouse.x, 3, dt); mouse.sy = damp(mouse.sy, mouse.y, 3, dt);
     if (introOn && introT < 1) introT = clamp(introT + dt / introDur);
     const it = easeOut(introT);
 
     // ---- jar pose
-    const lock = clamp(d.lift * 4 + d.fin * 2.5);
+    const lock = clamp(d.lift * 4 + d.fin * 2.5 + d.bev * 3);
     if (!dragging) {
       userRot += velRot * dt; velRot = damp(velRot, 0, 2.2, dt);
       userTilt = damp(userTilt, 0, 1.6, dt);
@@ -377,7 +400,8 @@ export function createScene(canvas) {
     const sway = Math.sin(time * 0.5) * 0.1 * (1 - d.product) * (1 - lock);
     jar.rotation.y = rotUser + sway + (1 - it) * Math.PI * 5;
     jar.rotation.x = userTilt * (1 - lock) + (1 - it) * 0.5 * Math.sin(time * 3) * 0 + 0.0;
-    jar.position.y = Math.sin(time * 1.1) * 0.025 + (1 - it) * 2.4 + (1 - it) * Math.sin(time * 2.4) * 0.05;
+    const floatY = d.product * (1 - d.fin) * (1 - d.bev) * 0.6;   // hover so tilting never dips into the stone
+    jar.position.y = floatY + Math.sin(time * 1.1) * 0.025 + (1 - it) * 2.4 + (1 - it) * Math.sin(time * 2.4) * 0.05;
     // swap tween
     let swapScale = 1;
     if (swapT < 1) {
@@ -410,6 +434,8 @@ export function createScene(canvas) {
     tmpP.copy(heroPos).lerp(P1, a).lerp(P2, b); tmpT.copy(heroTgt).lerp(T1, a).lerp(T2, b);
     tmpP.lerp(Pp, d.product); tmpT.lerp(Tp, d.product);
     tmpP.lerp(Pf, d.fin); tmpT.lerp(Tf, d.fin);
+    tmpP.lerp(PB, d.bev); tmpT.lerp(TB, d.bev);
+    tmpP.lerp(PD, d.dive); tmpT.lerp(TD, d.dive);
     if (isNarrow) { tmpP.z *= 1.12; tmpP.y += 0.15; }
     const dist = tmpP.distanceTo(tmpT);
     const viewW = 2 * dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * aspect;
@@ -421,13 +447,12 @@ export function createScene(canvas) {
     if (mol) {
       d.molIn = clamp(d.molIn + dt / 1.1);
       molProg = damp(molProg, molProgT, 4, dt);
-      tmpP.set(mouse.sx * 0.5 + sx, mouse.sy * 0.3 + sy, (isNarrow ? 12 : 10) - molProg * (isNarrow ? 0.8 : 1.0)); tmpT.set(sx, sy, 0);
-      const mi = easeOut(d.molIn);
+      tmpP.set(mouse.sx * 0.5 + sx * 1.7, mouse.sy * 0.3 + sy, (isNarrow ? 12 : 10) - molProg * (isNarrow ? 0.8 : 1.0)); tmpT.set(sx * 1.7, sy, 0);
       molSlots.forEach((g, i) => {
         const ph = g.userData.phase + time * 0.6;
         g.position.copy(g.userData.base); g.position.y += Math.sin(ph) * 0.12;
         g.rotation.y = time * 0.45 + i * 1.7 + molRotY + molProg * Math.PI * 1.4; g.rotation.x = Math.sin(time * 0.3 + i) * 0.25 + molRotX;
-        g.scale.setScalar(molScale * lerp(0.2, 1, clamp(mi * 1.4 - i * 0.15)));
+        const r = molReveal[i]; g.visible = r > 0.01; g.scale.setScalar(molScale * lerp(0.15, 1, r));
       });
       motes.rotation.y = time * 0.02; motes.position.y = Math.sin(time * 0.2) * 0.2;
       halo.needsUpdate = false;
@@ -437,24 +462,39 @@ export function createScene(canvas) {
     renderer.render(scene, camera);
   }
 
+  function applyStage() {
+    stage.visible = !mol && !backdrop;
+    catcher.visible = !mol && backdrop;
+    scene.background = mol ? bgDark : backdrop ? null : bgLight;
+  }
   function setMol(on) {
     mol = on; molRoot.visible = on; molLights.visible = on;
-    jar.visible = !on; stage.visible = !on; lightsJar.forEach((l) => (l.visible = !on));
-    scene.background = on ? bgDark : bgLight; scene.environmentIntensity = on ? 0.18 : 0.55;
+    jar.visible = !on; lightsJar.forEach((l) => (l.visible = !on));
+    scene.environmentIntensity = on ? 0.18 : 0.55;
     if (on) { d.molIn = 0; molRotX = molRotY = 0; }
+    applyStage();
   }
+  // Checkout: swap the stone stage for the brand photo (a page element) and keep only the tub's shadow.
+  function setBackdrop(on) { backdrop = on; applyStage(); }
 
   return {
-    resize, update, setMol,
+    resize, update, setMol, setBackdrop,
     start() { introOn = true; },
     skipIntro() { introT = 1; introOn = true; },
     set(k, v) { target[k] = v; },
-    setProduct(p) {
-      if (!currentProduct) { applyProduct(p); return; }
+    setProduct(p, immediate) {
+      if (!currentProduct || immediate) { applyProduct(p); pending = null; swapT = 1; return; }
       if (p.id === currentProduct.id || (pending && pending.id === p.id)) return;
       pending = p; swapT = 0; userRot = 0; velRot = 0; userTilt = 0;
     },
+    // Back to the very first frame: jar high above the plinth, intro will replay.
+    reset() {
+      Object.keys(target).forEach((k) => { target[k] = 0; d[k] = 0; });
+      d.molIn = 0; introT = 0; introOn = true; userRot = 0; velRot = 0; userTilt = 0; swapT = 1; pending = null;
+      molProg = 0; molProgT = 0; molReveal = [0, 0, 0];
+    },
     setAutoSpin(v) { autoSpin = v; },
+    setMolReveal(arr) { molReveal = arr; },
     setMolProgress(v) { molProgT = v; },
     pointer(x, y) { mouse.x = x; mouse.y = y; },
     dragStart() { dragging = true; velRot = 0; },
@@ -462,7 +502,7 @@ export function createScene(canvas) {
       const s = 0.0075;
       if (mol) { molRotY += dx * s * 1.1; if (!touch) molRotX = clamp(molRotX + dy * s, -0.9, 0.9); return; }
       userRot += dx * s * 1.3; velRot = (dx * s * 1.3) / 0.016;
-      if (!touch) userTilt = clamp(userTilt + dy * s, -0.5, 0.6);
+      if (!touch) userTilt = clamp(userTilt + dy * s, -0.35, 0.45);
       lastDrag = time;
     },
     dragEnd() { dragging = false; lastDrag = time; velRot = THREE.MathUtils.clamp(velRot, -6, 6); },

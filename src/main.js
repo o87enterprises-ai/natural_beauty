@@ -1,5 +1,6 @@
 import './styles.css';
 import { createScene } from './scene.js';
+import { createStub } from './stub.js';
 import { categories, byCategory, products, productById } from './data.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -7,6 +8,7 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
 const ease = (t) => t * t * (3 - 2 * t);
 const sm = (v, a, b) => ease(clamp((v - a) / (b - a)));
+const easeOut = (t) => 1 - Math.pow(1 - t, 3);
 const approach = (v, target, step) => (v < target ? Math.min(target, v + step) : Math.max(target, v - step));
 const money = (n) => `$${n.toFixed(2).replace(/\.00$/, '')}`;
 const narrow = () => window.innerWidth / window.innerHeight < 0.9;
@@ -53,14 +55,27 @@ function renderBag() {
 
 /* ------------------------------------------------------------------ funnel state */
 let state = { step: 'hero', cat: null, pi: 0 };
+let lastId = null;   // the product most recently added, shown on the checkout backdrop
 const stack = [];
 let t2 = 0, t2T = 0;      // hero -> category fly-through (0..1), time driven so it can rewind
 let f = 0, fT = 0;        // bag finale (0..1)
 let stepAt = performance.now();
 let insideAt = 0;
 let molApplied = false, molBusy = false, desiredMol = false;
+let reveals = [0, 0, 0];
+// "See inside" timeline, seconds from pressing the button
+const TL = { bev: 2.0, diveA: 1.6, diveB: 4.2, fadeA: 3.4, swap: 4.8, unfade: 5.8, mol0: 5.4, gap: 1.5, card: 7.0, reveal: 1.8 };
 
-const sc = createScene($('#gl'));
+// If the browser won't give us a WebGL context, keep the shop usable with a simple 2D version.
+let sc;
+try { sc = createScene($('#gl')); } catch (err) {
+  console.error('3D unavailable:', err);
+  sc = createStub();
+  document.body.classList.add('no3d');
+  const n = $('#notice');
+  n.innerHTML = `3D preview isn't available in this browser, so you're seeing the simple version.<small>${String((err && err.message) || err).replace(/[<>&]/g, '')}</small>`;
+  n.hidden = false;
+}
 const PANEL = { hero: 'hero', cats: 'cats', product: 'shop', inside: 'shop', bag: 'bag', done: 'bag' };
 const curList = () => byCategory(state.cat);
 const curProduct = () => curList()[state.pi];
@@ -83,16 +98,24 @@ function apply() {
   sc.set('product', side ? 1 : 0);
   updateShift();
   sc.setAutoSpin(step === 'product');
-  requestMol(step === 'inside');
+  if (step !== 'inside') requestMol(false);
   if (step === 'inside') insideAt = performance.now();
+  $('#fade').style.opacity = 0;
 
   if (step === 'product' || step === 'inside') showProduct(state.pi, true);
   if (step === 'product') { const h = $('#hint'); h.classList.add('show'); clearTimeout(h._t); h._t = setTimeout(() => h.classList.remove('show'), 5000); }
-  if (step === 'bag' || step === 'done') renderBag();
+  const checkout = step === 'bag' || step === 'done';
+  sc.setBackdrop(checkout);
+  if (checkout) {   // show the product being purchased on the backdrop
+    const pid = lastId && productById(lastId) ? lastId : Object.keys(cart)[0];
+    if (pid) sc.setProduct(productById(pid));
+    renderBag();
+  }
   clearHot();
 }
 
 function updateShift() {
+  if (state.step === 'inside') return;
   const side = ['product', 'inside', 'bag', 'done'].includes(state.step);
   sc.set('shiftX', side && !narrow() ? 1 : 0);
   sc.set('shiftY', side && narrow() ? (state.step === 'bag' || state.step === 'done' ? 2.4 : 1) : 0);
@@ -123,7 +146,7 @@ $('#pills').addEventListener('click', (e) => {
 $('#mainCta').addEventListener('click', () => {
   if (state.step === 'product') go({ step: 'inside' });
   else if (state.step === 'inside') {
-    const p = curProduct(); cart[p.id] = (cart[p.id] || 0) + 1; saveCart(); updateBadge(true); go({ step: 'bag' });
+    const p = curProduct(); cart[p.id] = (cart[p.id] || 0) + 1; lastId = p.id; saveCart(); updateBadge(true); go({ step: 'bag' });
   }
 });
 
@@ -151,8 +174,18 @@ $('#cartBody').addEventListener('click', (e) => {
     state = { ...state, step: 'done' }; apply(); return;
   }
   if (e.target.closest('#keep')) { stack.length = 0; stack.push({ step: 'hero', cat: null, pi: 0 }); state = { step: 'cats', cat: null, pi: 0 }; apply(); return; }
-  if (e.target.closest('#restart')) { stack.length = 0; state = { step: 'hero', cat: null, pi: 0 }; apply(); }
+  if (e.target.closest('#restart')) restart();
 });
+
+/* start over: a cream curtain, then the whole scene begins again from the very first frame (no rewinding) */
+function restart() {
+  const c = $('#curtain'); c.classList.remove('go'); void c.offsetWidth; c.classList.add('go');
+  setTimeout(() => {
+    stack.length = 0; state = { step: 'hero', cat: null, pi: 0 }; lastId = null;
+    t2 = 0; f = 0; sc.reset(); sc.setProduct(products[0], true);
+    apply(); sc.start();
+  }, 380);
+}
 
 /* viewer drag */
 (() => {
@@ -212,9 +245,10 @@ window.addEventListener('keydown', (e) => {
 });
 
 /* ------------------------------------------------------------------ molecule jump cut */
-function requestMol(on) {
+function requestMol(on, quiet = false) {
   desiredMol = on;
   if (molBusy || on === molApplied) return;
+  if (quiet) { molApplied = on; sc.setMol(on); document.body.classList.toggle('dark', on); if (on) fillMolLabels(); return; }
   molBusy = true;
   const stage = $('#stage'); stage.classList.remove('jumpcut'); void stage.offsetWidth; stage.classList.add('jumpcut');
   setTimeout(() => {
@@ -231,10 +265,9 @@ function labels() {
   const show = molApplied && state.step === 'inside';
   $('#molUi').classList.toggle('on', show);
   if (!molApplied) return;
-  const a = clamp(sc.molIn * 1.6 - 0.4);
   $$('.mol-label').forEach((el, i) => {
     const { x, y } = sc.molScreen(i);
-    el.style.transform = `translate(${x - el.offsetWidth / 2}px, ${y}px)`; el.style.opacity = a;
+    el.style.transform = `translate(${x - el.offsetWidth / 2}px, ${y}px)`; el.style.opacity = clamp((reveals[i] - 0.35) / 0.65);
   });
 }
 
@@ -243,7 +276,12 @@ function boot() {
   resize();
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   let last = performance.now();
+  let warned = false;
   const loop = (now) => {
+    requestAnimationFrame(loop);
+    try { frame(now); } catch (err) { if (!warned) { warned = true; console.error('frame error:', err); } }
+  };
+  const frame = (now) => {
     const dt = Math.min((now - last) / 1000, 0.25); last = now;
     t2 = approach(t2, t2T, dt / 3.8);
     f = approach(f, fT, dt / 3.2);
@@ -254,18 +292,33 @@ function boot() {
     // bag finale: lid lifts, logo floats forward and settles back
     const bumpLid = Math.sin(Math.PI * sm(f, 0.1, 0.9)) * 0.8;
     const bumpLift = Math.sin(Math.PI * sm(f, 0.15, 0.95)) * 0.95;
+
+    // See inside: lid opens, camera rises to a bird's-eye view over the tub, dives into the cream,
+    // fades to black, then the molecules are introduced one at a time.
+    const inside = state.step === 'inside';
+    const it = inside ? (performance.now() - insideAt) / 1000 : 0;
+    sc.set('bev', inside ? sm(it, 0, TL.bev) : 0);
+    sc.set('dive', inside ? sm(it, TL.diveA, TL.diveB) : 0);
     sc.set('lift', Math.max(seg.lift * k, bumpLift));
     sc.set('zoom', seg.zoom * k);
-    sc.set('lid', Math.max(seg.lid * k, bumpLid));
+    sc.set('lid', Math.max(seg.lid * k, bumpLid, inside ? sm(it, 0, 1.4) : 0));
     sc.set('fin', sm(f, 0, 0.5));
+    $('#fade').style.opacity = inside ? (it < TL.swap ? sm(it, TL.fadeA, TL.swap) : 1 - sm(it, TL.swap, TL.unfade)) : 0;
+    if (inside && it >= TL.swap && !molApplied) requestMol(true, true);
+    reveals = [0, 1, 2].map((i) => (inside && molApplied ? easeOut(clamp((it - TL.mol0 - i * TL.gap) / TL.reveal)) : 0));
+    sc.setMolReveal(reveals);
+    document.body.classList.toggle('cinema', inside && it < TL.card);
+    if (inside) {   // keep the bird's-eye view centred; shift the scene once the molecules appear
+      const side = it > TL.swap;
+      sc.set('shiftX', side && !narrow() ? 1 : 0); sc.set('shiftY', side && narrow() ? 1 : 0);
+    }
 
     const showCats = state.step === 'cats' && t2 > 0.86;
     $('.step[data-panel="cats"]').classList.toggle('show', showCats);
     $('#cats').inert = !showCats;
 
-    sc.setMolProgress(state.step === 'inside' ? clamp((performance.now() - insideAt) / 14000) : 0);
+    sc.setMolProgress(inside && molApplied ? clamp((it - TL.swap) / 16) : 0);
     sc.update(dt); labels();
-    requestAnimationFrame(loop);
   };
   requestAnimationFrame(loop);
   setTimeout(() => {
@@ -289,5 +342,5 @@ document.body.classList.add('loading');
   } catch { /* fonts optional */ }
   sc.setProduct(products[0]);
   boot();
-  window.__nb = { sc, go, back, apply, get state() { return state; }, get t2() { return t2; }, get f() { return f; } };
+  window.__nb = { sc, go, back, apply, get state() { return state; }, get t2() { return t2; }, get f() { return f; }, seek(t) { insideAt = performance.now() - t * 1000; } };
 })();
