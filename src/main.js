@@ -183,7 +183,10 @@ function direct() {
     if (pid !== activeProduct) { activeProduct = pid; sc.setProduct(productById(pid)); }
   }
   sc.setAutoSpin(inProd);
-  requestMol(inProd && pt >= 0.46 && pt <= 0.94);
+  // molecule phase: ~175vh of scroll (jar ~80vh before it, short tail after)
+  const MOL_A = 0.296, MOL_B = 0.944;
+  requestMol(inProd && pt >= MOL_A && pt <= MOL_B);
+  sc.setMolProgress(clamp((pt - MOL_A) / (MOL_B - MOL_A)));
 
   // viewer layout shifts (desktop: scene moves right of the card; mobile: scene moves up)
   const showSide = inProd || f > 0.05;

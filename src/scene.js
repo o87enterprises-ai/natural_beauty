@@ -334,7 +334,7 @@ export function createScene(canvas) {
   let molRotX = 0, molRotY = 0;
   const mouse = { x: 0, y: 0, sx: 0, sy: 0 };
   let currentProduct = null, pending = null, swapT = 1;
-  let aspect = 1, isNarrow = false, molScale = 0.9;
+  let aspect = 1, isNarrow = false, molScale = 0.72, molProg = 0, molProgT = 0;
 
   function applyProduct(p) {
     const old = bodyMats[0].map;
@@ -424,12 +424,13 @@ export function createScene(canvas) {
     // ---- molecule mode
     if (mol) {
       d.molIn = clamp(d.molIn + dt / 1.1);
-      tmpP.set(mouse.sx * 0.5 + sx, mouse.sy * 0.3 + sy, isNarrow ? 12 : 10); tmpT.set(sx, sy, 0);
+      molProg = damp(molProg, molProgT, 4, dt);
+      tmpP.set(mouse.sx * 0.5 + sx, mouse.sy * 0.3 + sy, (isNarrow ? 12 : 10) - molProg * (isNarrow ? 0.8 : 1.0)); tmpT.set(sx, sy, 0);
       const mi = easeOut(d.molIn);
       molSlots.forEach((g, i) => {
         const ph = g.userData.phase + time * 0.6;
         g.position.copy(g.userData.base); g.position.y += Math.sin(ph) * 0.12;
-        g.rotation.y = time * 0.45 + i * 1.7 + molRotY; g.rotation.x = Math.sin(time * 0.3 + i) * 0.25 + molRotX;
+        g.rotation.y = time * 0.45 + i * 1.7 + molRotY + molProg * Math.PI * 1.4; g.rotation.x = Math.sin(time * 0.3 + i) * 0.25 + molRotX;
         g.scale.setScalar(molScale * lerp(0.2, 1, clamp(mi * 1.4 - i * 0.15)));
       });
       motes.rotation.y = time * 0.02; motes.position.y = Math.sin(time * 0.2) * 0.2;
@@ -458,6 +459,7 @@ export function createScene(canvas) {
       pending = p; swapT = 0; userRot = 0; velRot = 0; userTilt = 0;
     },
     setAutoSpin(v) { autoSpin = v; },
+    setMolProgress(v) { molProgT = v; },
     pointer(x, y) { mouse.x = x; mouse.y = y; },
     dragStart() { dragging = true; velRot = 0; },
     drag(dx, dy, touch) {
