@@ -10,6 +10,9 @@ const ease = (t) => t * t * (3 - 2 * t);
 const easeOut = (t) => 1 - Math.pow(1 - t, 3);
 const damp = (cur, target, rate, dt) => lerp(cur, target, 1 - Math.exp(-rate * dt));
 
+// Lighter rendering on phones: less GPU memory means fewer failed or lost WebGL contexts.
+const LITE = typeof window !== 'undefined' && ((window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || Math.min(window.innerWidth, window.innerHeight) < 700);
+
 const R = 1;            // tub radius
 const BODY_H = 1.1;
 const TOP = BODY_H / 2;
@@ -34,8 +37,8 @@ function wrapText(ctx, text, x, y, maxW, lh) {
 }
 
 function labelTexture(p, anisotropy) {
-  const W = 4096, H = 720;
-  const c = makeCanvas(W, H); const ctx = c.getContext('2d');
+  const W = 4096, H = 720, q = LITE ? 0.5 : 1;
+  const c = makeCanvas(W * q, H * q); const ctx = c.getContext('2d'); ctx.scale(q, q);
   ctx.fillStyle = CREAM; ctx.fillRect(0, 0, W, H);
   // subtle paper grain
   for (let i = 0; i < 9000; i++) {
@@ -94,7 +97,7 @@ function labelTexture(p, anisotropy) {
 }
 
 function creamTexture() {
-  const S = 2048, k = S / 512; const c = makeCanvas(S, S); const ctx = c.getContext('2d');
+  const S = LITE ? 1024 : 2048, k = S / 512; const c = makeCanvas(S, S); const ctx = c.getContext('2d');
   const g = ctx.createRadialGradient(S * 0.4, S * 0.35, 20 * k, S / 2, S / 2, S * 0.7);
   g.addColorStop(0, '#fbf7f0'); g.addColorStop(1, '#e6dccb');
   ctx.fillStyle = g; ctx.fillRect(0, 0, S, S);
@@ -172,8 +175,14 @@ function monogramShapes() {
 
 /* ---------- main factory ---------- */
 export function createScene(canvas) {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  // Try the best settings first, then progressively gentler ones before giving up.
+  let renderer = null, lastErr = null;
+  for (const opts of [{ antialias: true, powerPreference: 'high-performance' }, { antialias: false, powerPreference: 'default' }, { antialias: false, powerPreference: 'low-power' }]) {
+    try { renderer = new THREE.WebGLRenderer({ canvas, alpha: false, ...opts }); break; } catch (err) { lastErr = err; }
+  }
+  if (!renderer) throw lastErr || new Error('WebGL unavailable');
+  canvas.addEventListener('webglcontextlost', (e) => e.preventDefault(), false);   // lets the browser restore it
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, LITE ? 1.5 : 2));
   renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
   const anisotropy = renderer.capabilities.getMaxAnisotropy();
@@ -207,7 +216,7 @@ export function createScene(canvas) {
 
   const spot = new THREE.SpotLight('#fff3e0', 260, 60, 0.62, 1, 1.6);
   spot.position.set(-3.5, 5.5, 8); spot.target.position.set(0, 0.2, -1);
-  spot.castShadow = true; spot.shadow.mapSize.set(2048, 2048); spot.shadow.bias = -0.0004; spot.shadow.normalBias = 0.02; spot.shadow.radius = 5;
+  spot.castShadow = true; spot.shadow.mapSize.set(LITE ? 1024 : 2048, LITE ? 1024 : 2048); spot.shadow.bias = -0.0004; spot.shadow.normalBias = 0.02; spot.shadow.radius = 5;
   spot.map = leafLightMap(); scene.add(spot, spot.target);
   const fill = new THREE.HemisphereLight('#fff6ea', '#cfc3b0', 0.55); scene.add(fill);
   const lightsJar = [spot, fill];
@@ -458,10 +467,16 @@ export function createScene(canvas) {
     start() { introOn = true; },
     skipIntro() { introT = 1; introOn = true; },
     set(k, v) { target[k] = v; },
-    setProduct(p) {
-      if (!currentProduct) { applyProduct(p); return; }
+    setProduct(p, immediate) {
+      if (!currentProduct || immediate) { applyProduct(p); pending = null; swapT = 1; return; }
       if (p.id === currentProduct.id || (pending && pending.id === p.id)) return;
       pending = p; swapT = 0; userRot = 0; velRot = 0; userTilt = 0;
+    },
+    // Back to the very first frame: jar high above the plinth, intro will replay.
+    reset() {
+      Object.keys(target).forEach((k) => { target[k] = 0; d[k] = 0; });
+      d.molIn = 0; introT = 0; introOn = true; userRot = 0; velRot = 0; userTilt = 0; swapT = 1; pending = null;
+      molProg = 0; molProgT = 0; molReveal = [0, 0, 0];
     },
     setAutoSpin(v) { autoSpin = v; },
     setMolReveal(arr) { molReveal = arr; },

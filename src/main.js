@@ -1,5 +1,6 @@
 import './styles.css';
 import { createScene } from './scene.js';
+import { createStub } from './stub.js';
 import { categories, byCategory, products, productById } from './data.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -62,9 +63,18 @@ let insideAt = 0;
 let molApplied = false, molBusy = false, desiredMol = false;
 let reveals = [0, 0, 0];
 // "See inside" timeline, seconds from pressing the button
-const TL = { bev: 2.6, diveA: 2.2, diveB: 5.8, fadeA: 4.8, swap: 6.6, unfade: 8.0, mol0: 7.6, gap: 2.8, card: 9.4 };
+const TL = { bev: 2.0, diveA: 1.6, diveB: 4.2, fadeA: 3.4, swap: 4.8, unfade: 5.8, mol0: 5.4, gap: 1.5, card: 7.0, reveal: 1.8 };
 
-const sc = createScene($('#gl'));
+// If the browser won't give us a WebGL context, keep the shop usable with a simple 2D version.
+let sc;
+try { sc = createScene($('#gl')); } catch (err) {
+  console.error('3D unavailable:', err);
+  sc = createStub();
+  document.body.classList.add('no3d');
+  const n = $('#notice');
+  n.innerHTML = `3D preview isn't available in this browser, so you're seeing the simple version.<small>${String((err && err.message) || err).replace(/[<>&]/g, '')}</small>`;
+  n.hidden = false;
+}
 const PANEL = { hero: 'hero', cats: 'cats', product: 'shop', inside: 'shop', bag: 'bag', done: 'bag' };
 const curList = () => byCategory(state.cat);
 const curProduct = () => curList()[state.pi];
@@ -157,8 +167,18 @@ $('#cartBody').addEventListener('click', (e) => {
     state = { ...state, step: 'done' }; apply(); return;
   }
   if (e.target.closest('#keep')) { stack.length = 0; stack.push({ step: 'hero', cat: null, pi: 0 }); state = { step: 'cats', cat: null, pi: 0 }; apply(); return; }
-  if (e.target.closest('#restart')) { stack.length = 0; state = { step: 'hero', cat: null, pi: 0 }; apply(); }
+  if (e.target.closest('#restart')) restart();
 });
+
+/* start over: a cream curtain, then the whole scene begins again from the very first frame (no rewinding) */
+function restart() {
+  const c = $('#curtain'); c.classList.remove('go'); void c.offsetWidth; c.classList.add('go');
+  setTimeout(() => {
+    stack.length = 0; state = { step: 'hero', cat: null, pi: 0 };
+    t2 = 0; f = 0; sc.reset(); sc.setProduct(products[0], true);
+    apply(); sc.start();
+  }, 380);
+}
 
 /* viewer drag */
 (() => {
@@ -249,7 +269,12 @@ function boot() {
   resize();
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   let last = performance.now();
+  let warned = false;
   const loop = (now) => {
+    requestAnimationFrame(loop);
+    try { frame(now); } catch (err) { if (!warned) { warned = true; console.error('frame error:', err); } }
+  };
+  const frame = (now) => {
     const dt = Math.min((now - last) / 1000, 0.25); last = now;
     t2 = approach(t2, t2T, dt / 3.8);
     f = approach(f, fT, dt / 3.2);
@@ -269,11 +294,11 @@ function boot() {
     sc.set('dive', inside ? sm(it, TL.diveA, TL.diveB) : 0);
     sc.set('lift', Math.max(seg.lift * k, bumpLift));
     sc.set('zoom', seg.zoom * k);
-    sc.set('lid', Math.max(seg.lid * k, bumpLid, inside ? sm(it, 0, 1.8) : 0));
+    sc.set('lid', Math.max(seg.lid * k, bumpLid, inside ? sm(it, 0, 1.4) : 0));
     sc.set('fin', sm(f, 0, 0.5));
     $('#fade').style.opacity = inside ? (it < TL.swap ? sm(it, TL.fadeA, TL.swap) : 1 - sm(it, TL.swap, TL.unfade)) : 0;
     if (inside && it >= TL.swap && !molApplied) requestMol(true, true);
-    reveals = [0, 1, 2].map((i) => (inside && molApplied ? easeOut(clamp((it - TL.mol0 - i * TL.gap) / 2)) : 0));
+    reveals = [0, 1, 2].map((i) => (inside && molApplied ? easeOut(clamp((it - TL.mol0 - i * TL.gap) / TL.reveal)) : 0));
     sc.setMolReveal(reveals);
     document.body.classList.toggle('cinema', inside && it < TL.card);
     if (inside) {   // keep the bird's-eye view centred; shift the scene once the molecules appear
@@ -287,7 +312,6 @@ function boot() {
 
     sc.setMolProgress(inside && molApplied ? clamp((it - TL.swap) / 16) : 0);
     sc.update(dt); labels();
-    requestAnimationFrame(loop);
   };
   requestAnimationFrame(loop);
   setTimeout(() => {

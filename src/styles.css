@@ -48,6 +48,22 @@ body:not([data-step="hero"]) .back { opacity: 1; visibility: visible; transform:
 body.dark .back { background: rgba(20,18,16,.55); border-color: rgba(255,255,255,.18); }
 body.dark .back:hover { background: var(--cream); color: var(--ink); }
 
+/* no-WebGL fallback: a calm cream page with the logo, plus a small explanatory note */
+#fallback { position: fixed; inset: 0; z-index: 1; display: none; place-items: center; pointer-events: none; transition: opacity .6s; }
+body.no3d #fallback { display: grid; }
+body.no3d.dark #fallback, body[data-step="bag"] #fallback, body[data-step="done"] #fallback { opacity: 0; }
+#fallback img { width: min(52vw, 360px); height: auto; opacity: .92; }
+body.dark { background: #0b0a09; }
+.notice { position: fixed; z-index: 60; left: 50%; top: 126px; transform: translateX(-50%); width: min(92vw, 460px); pointer-events: none; text-align: center; font-size: 11px; line-height: 1.5; letter-spacing: .04em; color: var(--muted); }
+.notice small { display: block; margin-top: 4px; font-size: 9px; opacity: .6; word-break: break-word; }
+body.dark .notice { opacity: 0; }
+.notice[hidden] { display: none; }
+
+/* cream curtain for Start over */
+#curtain { position: fixed; inset: 0; z-index: 95; background: var(--cream); opacity: 0; pointer-events: none; }
+#curtain.go { animation: curtain .95s ease-in-out; }
+@keyframes curtain { 0% { opacity: 0 } 40%, 55% { opacity: 1 } 100% { opacity: 0 } }
+
 /* black fade used by the See inside sequence (above the canvas, below the UI) */
 #fade { position: fixed; inset: 0; z-index: 5; background: #000; opacity: 0; pointer-events: none; }
 
