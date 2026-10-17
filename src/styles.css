@@ -12,6 +12,10 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 a { color: inherit; text-decoration: none; }
 h1, h2 { font-weight: 700; letter-spacing: -0.01em; line-height: 1.04; }
 
+/* checkout backdrop: the brand showcase photo behind the tub being purchased */
+#backdrop { position: fixed; inset: 0; z-index: 0; opacity: 0; transition: opacity 1.2s ease; pointer-events: none;
+  background: linear-gradient(rgba(239,233,225,.18), rgba(239,233,225,.18)), url('/showcase.jpg') 50% 60% / cover no-repeat; filter: blur(1.2px) saturate(.96); transform: scale(1.03); }
+body[data-step="bag"] #backdrop, body[data-step="done"] #backdrop { opacity: 1; }
 #stage { position: fixed; inset: 0; z-index: 0; }
 #gl { width: 100%; height: 100%; display: block; }
 #stage.jumpcut { animation: jumpcut .34s ease-in-out; }
@@ -140,7 +144,7 @@ body[data-step="product"] .hint.show { opacity: 1; }
 .mol-foot { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); font-size: 9px; letter-spacing: .3em; text-transform: uppercase; opacity: .4; white-space: nowrap; }
 
 /* bag */
-.cart-panel { position: absolute; left: var(--pad); top: 50%; transform: translateY(-46%); width: min(460px, 100% - 2 * var(--pad)); max-height: 78svh; overflow: auto; padding: 32px; background: rgba(239,233,225,.76); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(14,14,14,.12); border-radius: 4px; touch-action: pan-y; }
+.cart-panel { position: absolute; left: var(--pad); top: 50%; transform: translateY(-46%); width: min(460px, 100% - 2 * var(--pad)); max-height: 78svh; overflow: auto; padding: 32px; background: rgba(239,233,225,.95); backdrop-filter: blur(26px); -webkit-backdrop-filter: blur(26px); border: 1px solid rgba(14,14,14,.12); border-radius: 4px; touch-action: pan-y; }
 .cart-panel h2 { font-size: clamp(1.8rem, 3.2vw, 2.6rem); margin-bottom: 18px; }
 .cart-empty { font-size: 14px; line-height: 1.7; color: var(--muted); margin-bottom: 20px; }
 .cart-item { display: grid; grid-template-columns: 52px 1fr auto; gap: 14px; align-items: center; padding: 12px 0; border-bottom: 1px solid rgba(14,14,14,.12); }

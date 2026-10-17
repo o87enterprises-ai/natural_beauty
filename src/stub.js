@@ -7,7 +7,7 @@ export function createStub() {
   const narrow = () => window.innerWidth / window.innerHeight < 0.9;
   return {
     stub: true,
-    resize() {}, update() {}, reset() {}, start() {}, skipIntro() {}, set() {}, setMol() {}, setAutoSpin() {}, setMolProgress() {},
+    resize() {}, update() {}, reset() {}, setBackdrop() {}, start() {}, skipIntro() {}, set() {}, setMol() {}, setAutoSpin() {}, setMolProgress() {},
     setMolReveal() {}, pointer() {}, dragStart() {}, drag() {}, dragEnd() {},
     setProduct(p) { mols = p.molecules.map((m, i) => ({ name: m.name, note: m.note, formula: buildMolecule(`${m.name}-${i}`, m.kind).formula })); },
     getMolecules() { return mols; },

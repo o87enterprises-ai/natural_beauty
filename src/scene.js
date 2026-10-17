@@ -178,9 +178,10 @@ export function createScene(canvas) {
   // Try the best settings first, then progressively gentler ones before giving up.
   let renderer = null, lastErr = null;
   for (const opts of [{ antialias: true, powerPreference: 'high-performance' }, { antialias: false, powerPreference: 'default' }, { antialias: false, powerPreference: 'low-power' }]) {
-    try { renderer = new THREE.WebGLRenderer({ canvas, alpha: false, ...opts }); break; } catch (err) { lastErr = err; }
+    try { renderer = new THREE.WebGLRenderer({ canvas, alpha: true, ...opts }); break; } catch (err) { lastErr = err; }
   }
   if (!renderer) throw lastErr || new Error('WebGL unavailable');
+  renderer.setClearColor(0x000000, 0);
   canvas.addEventListener('webglcontextlost', (e) => e.preventDefault(), false);   // lets the browser restore it
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, LITE ? 1.5 : 2));
   renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -204,6 +205,11 @@ export function createScene(canvas) {
   wall.position.set(0, 4, -4.2); wall.receiveShadow = true; stage.add(wall);
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 40), new THREE.MeshStandardMaterial({ color: '#ece5db', roughness: 0.85 }));
   floor.rotation.x = -Math.PI / 2; floor.position.y = -0.93; floor.receiveShadow = true; stage.add(floor);
+
+  // invisible floor that only catches the tub's shadow, used when the stage is swapped for a photo backdrop
+  const catcher = new THREE.Mesh(new THREE.PlaneGeometry(14, 14), new THREE.ShadowMaterial({ opacity: 0.32 }));
+  catcher.rotation.x = -Math.PI / 2; catcher.position.y = -0.58; catcher.receiveShadow = true; catcher.visible = false; scene.add(catcher);
+  let backdrop = false;
 
   const stoneMap = stoneTexture(); stoneMap.repeat.set(2, 1);
   const stoneMat = new THREE.MeshStandardMaterial({ map: stoneMap, roughness: 0.95, color: '#ddd5c8' });
@@ -370,8 +376,8 @@ export function createScene(canvas) {
   const heroPos = new THREE.Vector3(0, 0.6, 6.4), heroTgt = new THREE.Vector3(0, 0.1, 0);
   const P1 = new THREE.Vector3(0, 0.6, 3.0), T1 = new THREE.Vector3(0, 0.2, 0);
   const P2 = new THREE.Vector3(0, 3.6, 2.7), T2 = new THREE.Vector3(0, 0.35, -0.2);
-  const Pp = new THREE.Vector3(0, 0.55, 7.6), Tp = new THREE.Vector3(0, 0, 0);
-  const Pf = new THREE.Vector3(0.7, 1.15, 7.0), Tf = new THREE.Vector3(0, 0.15, 0);
+  const Pp = new THREE.Vector3(0, 0.85, 7.6), Tp = new THREE.Vector3(0, 0.3, 0);
+  const Pf = new THREE.Vector3(0.7, 1.15, 7.0), Tf = new THREE.Vector3(0, 0.5, 0);
   const PB = new THREE.Vector3(0, 5.2, 0.55), TB = new THREE.Vector3(0, 0.45, 0);     // bird's-eye above the open tub
   const PD = new THREE.Vector3(0, 1.5, 0.12), TD = new THREE.Vector3(0, 0.5, 0);      // down into the cream
 
@@ -394,7 +400,8 @@ export function createScene(canvas) {
     const sway = Math.sin(time * 0.5) * 0.1 * (1 - d.product) * (1 - lock);
     jar.rotation.y = rotUser + sway + (1 - it) * Math.PI * 5;
     jar.rotation.x = userTilt * (1 - lock) + (1 - it) * 0.5 * Math.sin(time * 3) * 0 + 0.0;
-    jar.position.y = Math.sin(time * 1.1) * 0.025 + (1 - it) * 2.4 + (1 - it) * Math.sin(time * 2.4) * 0.05;
+    const floatY = d.product * (1 - d.fin) * (1 - d.bev) * 0.6;   // hover so tilting never dips into the stone
+    jar.position.y = floatY + Math.sin(time * 1.1) * 0.025 + (1 - it) * 2.4 + (1 - it) * Math.sin(time * 2.4) * 0.05;
     // swap tween
     let swapScale = 1;
     if (swapT < 1) {
@@ -455,15 +462,23 @@ export function createScene(canvas) {
     renderer.render(scene, camera);
   }
 
+  function applyStage() {
+    stage.visible = !mol && !backdrop;
+    catcher.visible = !mol && backdrop;
+    scene.background = mol ? bgDark : backdrop ? null : bgLight;
+  }
   function setMol(on) {
     mol = on; molRoot.visible = on; molLights.visible = on;
-    jar.visible = !on; stage.visible = !on; lightsJar.forEach((l) => (l.visible = !on));
-    scene.background = on ? bgDark : bgLight; scene.environmentIntensity = on ? 0.18 : 0.55;
+    jar.visible = !on; lightsJar.forEach((l) => (l.visible = !on));
+    scene.environmentIntensity = on ? 0.18 : 0.55;
     if (on) { d.molIn = 0; molRotX = molRotY = 0; }
+    applyStage();
   }
+  // Checkout: swap the stone stage for the brand photo (a page element) and keep only the tub's shadow.
+  function setBackdrop(on) { backdrop = on; applyStage(); }
 
   return {
-    resize, update, setMol,
+    resize, update, setMol, setBackdrop,
     start() { introOn = true; },
     skipIntro() { introT = 1; introOn = true; },
     set(k, v) { target[k] = v; },
@@ -487,7 +502,7 @@ export function createScene(canvas) {
       const s = 0.0075;
       if (mol) { molRotY += dx * s * 1.1; if (!touch) molRotX = clamp(molRotX + dy * s, -0.9, 0.9); return; }
       userRot += dx * s * 1.3; velRot = (dx * s * 1.3) / 0.016;
-      if (!touch) userTilt = clamp(userTilt + dy * s, -0.5, 0.6);
+      if (!touch) userTilt = clamp(userTilt + dy * s, -0.35, 0.45);
       lastDrag = time;
     },
     dragEnd() { dragging = false; lastDrag = time; velRot = THREE.MathUtils.clamp(velRot, -6, 6); },

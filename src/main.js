@@ -55,6 +55,7 @@ function renderBag() {
 
 /* ------------------------------------------------------------------ funnel state */
 let state = { step: 'hero', cat: null, pi: 0 };
+let lastId = null;   // the product most recently added, shown on the checkout backdrop
 const stack = [];
 let t2 = 0, t2T = 0;      // hero -> category fly-through (0..1), time driven so it can rewind
 let f = 0, fT = 0;        // bag finale (0..1)
@@ -103,7 +104,13 @@ function apply() {
 
   if (step === 'product' || step === 'inside') showProduct(state.pi, true);
   if (step === 'product') { const h = $('#hint'); h.classList.add('show'); clearTimeout(h._t); h._t = setTimeout(() => h.classList.remove('show'), 5000); }
-  if (step === 'bag' || step === 'done') renderBag();
+  const checkout = step === 'bag' || step === 'done';
+  sc.setBackdrop(checkout);
+  if (checkout) {   // show the product being purchased on the backdrop
+    const pid = lastId && productById(lastId) ? lastId : Object.keys(cart)[0];
+    if (pid) sc.setProduct(productById(pid));
+    renderBag();
+  }
   clearHot();
 }
 
@@ -139,7 +146,7 @@ $('#pills').addEventListener('click', (e) => {
 $('#mainCta').addEventListener('click', () => {
   if (state.step === 'product') go({ step: 'inside' });
   else if (state.step === 'inside') {
-    const p = curProduct(); cart[p.id] = (cart[p.id] || 0) + 1; saveCart(); updateBadge(true); go({ step: 'bag' });
+    const p = curProduct(); cart[p.id] = (cart[p.id] || 0) + 1; lastId = p.id; saveCart(); updateBadge(true); go({ step: 'bag' });
   }
 });
 
@@ -174,7 +181,7 @@ $('#cartBody').addEventListener('click', (e) => {
 function restart() {
   const c = $('#curtain'); c.classList.remove('go'); void c.offsetWidth; c.classList.add('go');
   setTimeout(() => {
-    stack.length = 0; state = { step: 'hero', cat: null, pi: 0 };
+    stack.length = 0; state = { step: 'hero', cat: null, pi: 0 }; lastId = null;
     t2 = 0; f = 0; sc.reset(); sc.setProduct(products[0], true);
     apply(); sc.start();
   }, 380);
